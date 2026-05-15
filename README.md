@@ -1,0 +1,2 @@
+# Zplan
+Agentic Stock Assistant
