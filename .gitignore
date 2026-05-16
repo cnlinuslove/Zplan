@@ -1,0 +1,36 @@
+# 虚拟环境
+.venv/
+
+# 密钥与本地配置
+.env
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 本地数据库
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 运行日志
+logs/*.log
+!logs/.gitkeep
+
+# macOS / IDE（各 Agent 内 .vscode 可提交 settings，此处不全局忽略）
+.DS_Store
+.idea/
+
+# OpenClaw：独立上游仓库，请在本机另行 clone（见 README.md）
+OpenClaw/

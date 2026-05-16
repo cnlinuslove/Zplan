@@ -1,0 +1,19 @@
+# 可选：本地 PostgreSQL（大容量 / 多进程）
+# 启动：docker compose -f docker-compose.postgres.yml up -d
+# .env 中设置：
+#   DB_URL=postgresql+psycopg://zplan:zplan@127.0.0.1:5432/zplan
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zplan
+      POSTGRES_PASSWORD: zplan
+      POSTGRES_DB: zplan
+    ports:
+      - "5432:5432"
+    volumes:
+      - zplan_pgdata:/var/lib/postgresql/data
+
+volumes:
+  zplan_pgdata:

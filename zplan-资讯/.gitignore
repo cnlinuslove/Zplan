@@ -1,0 +1,33 @@
+# 虚拟环境（勿提交）
+.venv/
+
+# 密钥与本地配置
+.env
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 本地数据库
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 运行日志（勿提交）
+logs/*.log
+
+# macOS / IDE
+.DS_Store
+.idea/
+.vscode/

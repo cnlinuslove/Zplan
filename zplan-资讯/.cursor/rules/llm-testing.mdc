@@ -1,0 +1,11 @@
+---
+description: 用户正在验证 Gemini/LLM 问答链路，勿建议关闭 LLM
+alwaysApply: true
+---
+
+# LLM 测试偏好
+
+- 用户当前目标是 **测试 LLM（Gemini）归纳与问答**，不是「无 LLM 的轻量模式」。
+- **禁止**主动建议：`--no-gemini`、`LLM_SUMMARY_ENABLED=false`、为省配额而关闭 Gemini、改用纯规则模板作为「推荐方案」。
+- 遇 **429 / 配额 / 网络** 问题时：说明原因，给出 **恢复后如何继续测 LLM** 的步骤（等待 RPM 窗口、`gemini-check`、再 `wechat-reply`），而不是劝用户放弃 LLM。
+- 规则模板回退仅作 **故障时的实际行为说明**，不要把它当作首选产品路径推荐给该用户。

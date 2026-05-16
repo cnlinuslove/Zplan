@@ -1,0 +1,14 @@
+{
+  "folders": [
+    { "name": "资讯", "path": "." },
+    { "name": "共享", "path": "../zplan-共享" },
+    { "name": "股价", "path": "../zplan-股价" },
+    { "name": "选股", "path": "../zplan-选股" },
+    { "name": "回测", "path": "../zplan-回测" },
+    { "name": "monorepo", "path": ".." }
+  ],
+  "settings": {
+    "python.terminal.activateEnvironment": true,
+    "terminal.integrated.cwd": "${workspaceFolder:资讯}"
+  }
+}

@@ -1,0 +1,19 @@
+-e ../zplan-共享
+akshare
+typing_extensions>=4.9.0
+sqlalchemy
+pandas
+tenacity
+python-dotenv
+requests
+feedparser>=6.0.11
+urllib3>=2.0
+certifi
+charset-normalizer
+idna
+PySocks
+pypac>=0.16.4
+dukpy>=0.2.3
+streamlit>=1.31.0
+psycopg[binary]>=3.1.0
+wechatpy>=1.8.18

@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zplan-trend"
+version = "0.1.0"
+description = "Z-Plan 股价 Agent（日线 ETL 与行情逻辑）"
+requires-python = ">=3.12"
+[tool.setuptools.packages.find]
+where = ["src"]

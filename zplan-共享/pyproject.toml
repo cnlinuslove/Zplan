@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zplan-shared"
+version = "0.1.0"
+description = "Z-Plan 共享配置、数据库模型与 AkShare 股价 ETL"
+requires-python = ">=3.12"
+dependencies = [
+    "akshare",
+    "pandas",
+    "pyarrow",
+    "python-dotenv",
+    "sqlalchemy",
+    "tenacity",
+    "typing_extensions>=4.9.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
