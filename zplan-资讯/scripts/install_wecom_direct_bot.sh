@@ -23,6 +23,14 @@ fi
 
 mkdir -p "$LOG_DIR"
 
+PROXY="$(
+  cd "$ROOT" && .venv/bin/python - <<'PY'
+from outbound_http import resolve_effective_proxy_url
+url, _ = resolve_effective_proxy_url()
+print(url or "")
+PY
+)"
+
 # 与 OpenClaw 网关互斥
 if command -v openclaw >/dev/null 2>&1; then
   openclaw gateway stop 2>/dev/null || true
@@ -54,6 +62,15 @@ cat > "$PLIST" <<EOF
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>USE_SYSTEM_PROXY</key>
+    <string>true</string>
+$(if [[ -n "$PROXY" ]]; then cat <<PROXYEOF
+    <key>HTTP_PROXY</key>
+    <string>${PROXY}</string>
+    <key>HTTPS_PROXY</key>
+    <string>${PROXY}</string>
+PROXYEOF
+fi)
   </dict>
 </dict>
 </plist>

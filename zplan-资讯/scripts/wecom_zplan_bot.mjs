@@ -37,16 +37,48 @@ function stripMention(text) {
   return (text || "").replace(/^@\S+\s*/u, "").trim() || (text || "").trim();
 }
 
-function runZplanReply(userText) {
+function parseZplanJson(blob) {
+  const trimmed = blob.trim();
+  if (!trimmed) throw new Error("empty output");
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    /* openclaw_bridge 使用 indent=2，整段 stdout 才是合法 JSON */
+  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+  throw new Error("no json object in output");
+}
+
+function runZplanReply(userText, childEnv) {
   const py = join(ROOT, ".venv/bin/python");
+  const timeoutMs = Number(process.env.WECOM_REPLY_TIMEOUT_MS || 120_000);
   return new Promise((resolve, reject) => {
     const proc = spawn(
       py,
       ["openclaw_bridge.py", "wechat-reply", "--text", userText],
-      { cwd: ROOT, env: { ...process.env } },
+      { cwd: ROOT, env: childEnv },
     );
     let out = "";
     let err = "";
+    let settled = false;
+    const finish = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(val);
+    };
+    const timer = setTimeout(() => {
+      proc.kill("SIGTERM");
+      setTimeout(() => proc.kill("SIGKILL"), 3000);
+      finish(
+        reject,
+        new Error(`处理超时（>${Math.round(timeoutMs / 1000)}s），请稍后重试「帮助」确认在线`),
+      );
+    }, timeoutMs);
     proc.stdout.on("data", (d) => {
       out += d;
     });
@@ -56,22 +88,58 @@ function runZplanReply(userText) {
     proc.on("close", (code) => {
       const blob = (out || err).trim();
       if (!blob) {
-        reject(new Error(`zplan exit ${code}, no output`));
+        finish(reject, new Error(`zplan exit ${code}, no output`));
         return;
       }
       try {
-        const lastLine = blob.split("\n").filter(Boolean).pop();
-        const data = JSON.parse(lastLine);
+        const data = parseZplanJson(out || err);
         if (!data.ok) {
-          reject(new Error(data.error?.message || JSON.stringify(data.error) || "zplan failed"));
+          finish(
+            reject,
+            new Error(data.error?.message || JSON.stringify(data.error) || "zplan failed"),
+          );
           return;
         }
-        resolve(String(data.reply_text || data.reply_markdown || "（无回复内容）").slice(0, 1800));
+        finish(
+          resolve,
+          String(data.reply_text || data.reply_markdown || "（无回复内容）").slice(0, 1800),
+        );
       } catch (e) {
-        reject(new Error(`parse zplan json failed: ${blob.slice(0, 300)}`));
+        finish(reject, new Error(`parse zplan json failed: ${(out || err).slice(0, 300)}`));
       }
     });
   });
+}
+
+function resolveOutboundProxy() {
+  const py = join(ROOT, ".venv/bin/python");
+  return new Promise((resolve) => {
+    const proc = spawn(
+      py,
+      [
+        "-c",
+        "from outbound_http import resolve_effective_proxy_url; u,_=resolve_effective_proxy_url(); print(u or '')",
+      ],
+      { cwd: ROOT, env: { ...process.env } },
+    );
+    let out = "";
+    proc.stdout.on("data", (d) => {
+      out += d;
+    });
+    proc.on("close", () => resolve(out.trim()));
+    proc.on("error", () => resolve(""));
+  });
+}
+
+function buildChildEnv() {
+  const env = { ...process.env };
+  if (!env.USE_SYSTEM_PROXY) env.USE_SYSTEM_PROXY = "true";
+  if (env.HTTP_PROXY) env.AKSHARE_USE_SYSTEM_PROXY = "true";
+  return env;
+}
+
+function makeStreamId() {
+  return `stream_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 async function main() {
@@ -83,18 +151,34 @@ async function main() {
     process.exit(1);
   }
 
-  let AiBot;
+  let sdk;
   try {
-    AiBot = await import(SDK);
+    sdk = await import(SDK);
   } catch (e) {
     console.error("无法加载 @wecom/aibot-node-sdk，请先安装企微 OpenClaw 插件。");
     console.error(e?.message || e);
     process.exit(1);
   }
 
-  const { WSClient, generateReqId } = AiBot.default || AiBot;
+  const WSClient = sdk.WSClient;
+  const generateReqId = typeof sdk.generateReqId === "function" ? sdk.generateReqId : makeStreamId;
+  if (!WSClient) {
+    console.error("SDK 缺少 WSClient 导出");
+    process.exit(1);
+  }
   const ws = new WSClient({ botId, secret });
   const inFlight = new Set();
+  const childEnv = buildChildEnv();
+
+  const proxy = await resolveOutboundProxy();
+  if (proxy) {
+    childEnv.HTTP_PROXY = proxy;
+    childEnv.HTTPS_PROXY = proxy;
+    childEnv.AKSHARE_USE_SYSTEM_PROXY = "true";
+    console.log(`[wecom-zplan] 出站代理 ${proxy}`);
+  } else {
+    console.warn("[wecom-zplan] 未检测到系统代理，Gemini/外网可能较慢");
+  }
 
   ws.on("authenticated", () => {
     console.log("[wecom-zplan] 已连接企微，等待消息…（@机器人 发「帮助」测试）");
@@ -105,7 +189,7 @@ async function main() {
     const query = stripMention(raw);
     if (!query) return;
 
-    const msgId = frame?.header?.msgid || generateReqId("msg");
+    const msgId = frame?.body?.msgid || frame?.header?.req_id || makeStreamId();
     if (inFlight.has(msgId)) return;
     inFlight.add(msgId);
 
@@ -118,7 +202,7 @@ async function main() {
         if (!isFast) {
           await ws.replyStream(frame, streamId, "正在检索资讯，请稍候…", false);
         }
-        const reply = await runZplanReply(query);
+        const reply = await runZplanReply(query, childEnv);
         await ws.replyStream(frame, streamId, reply, true);
         console.log(`[wecom-zplan] 已回复 ${reply.length} 字`);
       } catch (e) {

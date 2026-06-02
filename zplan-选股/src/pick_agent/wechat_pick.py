@@ -95,6 +95,32 @@ def _report_to_pick_row(report: dict[str, Any]) -> dict[str, Any]:
     return attach_concepts(row)
 
 
+def _format_linked_news_lines(report: dict[str, Any], *, max_items: int = 3) -> list[str]:
+    linked = (report.get("modules") or {}).get("8_核心竞争力", {}).get("舆情") or {}
+    items = list(linked.get("items") or [])
+    total = int(linked.get("total") or 0)
+    fallback = int((report.get("modules") or {}).get("7_公司风险", {}).get("新闻条数_48h") or 0)
+    n = total or fallback
+    name = (report.get("meta") or {}).get("name") or "该股"
+    if n <= 0:
+        return [f"相关资讯：近48h 库内暂无关联快讯（可问「{name} 最近新闻」）"]
+    lines = [f"相关资讯（48h {n} 条）"]
+    shown = 0
+    for item in items[:max_items]:
+        title = " ".join(str(item.get("title") or "").split())
+        if not title:
+            continue
+        url = str(item.get("article_url") or "").strip()
+        if url.startswith(("http://", "https://")):
+            lines.append(f"· [{title[:56]}]({url})")
+        else:
+            lines.append(f"· {title[:72]}")
+        shown += 1
+    if shown == 0 and n > 0:
+        lines.append(f"· 库内已关联 {n} 条，标题未载入（可问「{name} 最近新闻」）")
+    return lines
+
+
 def format_wechat_pick_text(
     report: dict[str, Any],
     *,
@@ -146,6 +172,8 @@ def format_wechat_pick_text(
     sig = m4.get("关键信号") or []
     if sig:
         lines.append("信号 " + "；".join(str(s) for s in sig[:3]))
+
+    lines.extend(_format_linked_news_lines(report))
 
     if run_id is not None:
         lines.append(f"（已入库 run_id={run_id}）")
