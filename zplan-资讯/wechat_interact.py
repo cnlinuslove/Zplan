@@ -12,23 +12,39 @@ from typing import Any
 from agents.info_query import answer_info_question
 from agents.news_agent import get_history_payload
 from models import init_db
+from pick_wechat import try_handle_pick
 from topic_admin import list_topics
+from wechat_limits import WECHAT_TEXT_MAX_BYTES, truncate_wechat_utf8
 
 HELP_TEXT = """【Z-Plan 使用说明】
 
-指令：
+资讯：
 · 最新 — 各 topic 最新 X 摘要
 · 7天 — 最近 7 天摘要
 · 列表 — 全部 topic
 · 查 + topic_key — 指定 topic 摘要
 
+选股打分：
+· 选股 爱普股份 — 规则+LLM 简评（可只发「爱普股份」）
+· 打分 / 分析 / 研报 + 名称或 6 位代码
+· 筛选 脑机接口 — 按题材成份（需先同步概念库）
+
 问答（直接发问题）：
-· 默认现场拉取 Google RSS / 东财快讯等，并结合本地库整理
-· 例：北向资金最近怎样、美联储加息、地缘冲突最新
+· 例：北向资金最近怎样、美联储加息
 
 发「帮助」可随时查看本说明。"""
 
 HELP_MARKDOWN = f"### Z-Plan\n> {HELP_TEXT.replace(chr(10), chr(10) + '> ')}"
+
+
+def _normalize_user_text(message: str) -> str:
+    """去掉企微 @机器人 前缀，便于匹配「帮助」等指令。"""
+    raw = (message or "").strip()
+    if not raw:
+        return raw
+    # @Zplan 帮助 / @Zplan  帮助
+    raw = re.sub(r"^@\S+\s*", "", raw, count=1).strip()
+    return raw or (message or "").strip()
 
 
 def _reply_payload(intent: str, text: str, **extra: Any) -> dict[str, Any]:
@@ -43,7 +59,7 @@ def _reply_payload(intent: str, text: str, **extra: Any) -> dict[str, Any]:
 
 def handle_inbound_text(message: str) -> dict[str, Any]:
     init_db()
-    raw = (message or "").strip()
+    raw = _normalize_user_text(message)
     if not raw or raw.lower() in ("help", "帮助", "?", "？"):
         return _reply_payload("help", HELP_TEXT)
 
@@ -66,6 +82,16 @@ def handle_inbound_text(message: str) -> dict[str, Any]:
         ]
         body = "\n".join(lines) if lines else "(暂无 topic)"
         return _reply_payload("topic_list", f"【Topic 列表】\n{body}")
+
+    pick = try_handle_pick(raw)
+    if pick and pick.get("reply_text"):
+        text = truncate_wechat_utf8(str(pick["reply_text"]), WECHAT_TEXT_MAX_BYTES)
+        return _reply_payload(
+            str(pick.get("intent") or "pick"),
+            text,
+            ts_code=pick.get("ts_code"),
+            run_id=pick.get("run_id"),
+        )
 
     m = re.match(r"查\s*(\S+)", raw)
     key = m.group(1) if m else raw

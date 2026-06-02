@@ -1,1 +1,3 @@
 -e ../zplan-共享
+pyyaml>=6.0
+pytest>=8.0

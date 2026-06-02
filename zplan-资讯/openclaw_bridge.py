@@ -43,10 +43,9 @@ def _fetch_pac_snippet(url: str, max_len: int = 400) -> str:
     try:
         out = subprocess.check_output(
             ["curl", "-sS", "--max-time", "12", url],
-            text=True,
             timeout=15,
         )
-        text = (out or "").strip().replace("\r\n", "\n")
+        text = (out or b"").decode("utf-8", errors="replace").strip().replace("\r\n", "\n")
         return text[:max_len]
     except Exception as exc:
         return f"(pac fetch failed: {exc})"

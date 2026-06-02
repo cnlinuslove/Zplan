@@ -6,7 +6,7 @@ from typing import Any, Callable
 import pandas as pd
 
 from config import GOOGLE_RSS_KEYWORDS
-from models import init_db
+from zplan_shared.models import init_db
 from sentiment_etl.akshare_em import (
     fetch_em_financial_flash_df,
     fetch_em_index_turnover_df,
@@ -92,12 +92,72 @@ def run_sentiment_etl(*, push_wechat: bool = True) -> dict[str, Any]:
             load_df["description"] = None
             stats["inserted"][label] = load_global_news_df(load_df, channel="google_rss")
 
+    try:
+        import os
+
+        from zplan_shared.news_linker import link_recent_news, news_link_coverage_stats
+
+        relink = os.getenv("DAILY_NEWS_LINK_RELINK", "false").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        link_hours = int(os.getenv("DAILY_NEWS_LINK_HOURS", "168") or "168")
+        link_limit = int(os.getenv("DAILY_NEWS_LINK_LIMIT", "800") or "800")
+        stats["news_link"] = link_recent_news(
+            hours=link_hours,
+            limit_per_table=link_limit,
+            relink=relink,
+        )
+        stats["coverage_48h"] = news_link_coverage_stats(hours=48)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("news_stock_link 补链失败: %s", exc)
+        stats["news_link"] = {"error": str(exc)}
+
+    stats["alerts"] = _collect_etl_alerts(stats)
+    if stats["alerts"]:
+        for msg in stats["alerts"]:
+            logger.warning("[ETL告警] %s", msg)
+
     logger.info("sentiment_etl 完成: %s", stats.get("inserted"))
 
     if push_wechat:
         stats["wechat"] = push_etl_digest_to_wechat(stats)
 
     return stats
+
+
+def _collect_etl_alerts(stats: dict[str, Any]) -> list[str]:
+    """监控 inserted=0 或拉取失败（P0 运维）。"""
+    alerts: list[str] = []
+    inserted = stats.get("inserted") or {}
+    fetched = stats.get("fetched") or {}
+    skip_zero_alert = {"newsapi"}
+
+    for label, val in inserted.items():
+        if isinstance(val, dict) and val.get("error"):
+            alerts.append(f"{label}: {str(val['error'])[:160]}")
+            continue
+        if label in skip_zero_alert:
+            continue
+        n_ins = int(val) if isinstance(val, int) else 0
+        raw = fetched.get(label)
+        n_fetch = len(raw) if isinstance(raw, pd.DataFrame) else 0
+        if isinstance(raw, Exception):
+            alerts.append(f"{label}: fetch failed")
+            continue
+        if n_fetch > 0 and n_ins == 0:
+            alerts.append(f"{label}: fetched={n_fetch} inserted=0（可能全重复）")
+        elif n_fetch == 0 and n_ins == 0:
+            alerts.append(f"{label}: fetched=0 inserted=0（源无新数据或拉取失败）")
+
+    cov = stats.get("coverage_48h") or {}
+    if isinstance(cov, dict):
+        for key in ("financial_alerts_coverage_pct", "global_news_coverage_pct"):
+            pct = cov.get(key)
+            if isinstance(pct, (int, float)) and pct < 5.0 and cov.get(key.replace("_coverage_pct", "_total"), 0) > 10:
+                alerts.append(f"48h {key}={pct}% 过低，请检查 news_stock_link / 简称词典")
+    return alerts
 
 
 if __name__ == "__main__":

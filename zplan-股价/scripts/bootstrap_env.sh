@@ -13,4 +13,7 @@ else
   .venv/bin/python -m pip install -U pip
   .venv/bin/python -m pip install -e "$SHARED" -e "$ROOT" -r "$REQ"
 fi
+if [[ "${ZPLAN_UPGRADE_AKSHARE:-0}" == "1" ]]; then
+  "${ROOT}/scripts/upgrade_akshare.sh"
+fi
 echo "完成: ${ROOT}/.venv"

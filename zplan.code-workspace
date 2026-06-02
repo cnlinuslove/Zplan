@@ -1,13 +1,66 @@
 {
   "folders": [
-    { "name": "资讯", "path": "zplan-资讯" },
-    { "name": "共享", "path": "zplan-共享" },
-    { "name": "股价", "path": "zplan-股价" },
-    { "name": "选股", "path": "zplan-选股" },
-    { "name": "回测", "path": "zplan-回测" }
+    {
+      "name": "资讯",
+      "path": "zplan-资讯",
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+      }
+    },
+    {
+      "name": "共享",
+      "path": "zplan-共享",
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder:资讯}/.venv/bin/python",
+        "python.analysis.extraPaths": ["${workspaceFolder}/src"]
+      }
+    },
+    {
+      "name": "股价",
+      "path": "zplan-股价",
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+      }
+    },
+    {
+      "name": "选股",
+      "path": "zplan-选股",
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+      }
+    },
+    {
+      "name": "回测",
+      "path": "zplan-回测",
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+      }
+    }
   ],
   "settings": {
     "python.terminal.activateEnvironment": true,
-    "terminal.integrated.cwd": "${workspaceFolder:资讯}"
+    "terminal.integrated.cwd": "${workspaceFolder:资讯}",
+    "files.associations": {
+      "CLAUDE.md": "markdown"
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "charliermarsh.ruff",
+      "anthropic.claude-code"
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Z-Plan: VS Code + Claude 迁移",
+        "type": "shell",
+        "command": "./scripts/setup_vscode_claude.sh",
+        "options": { "cwd": "${workspaceFolder:资讯}/.." }
+      }
+    ]
   }
 }

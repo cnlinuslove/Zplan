@@ -1,0 +1,38 @@
+{
+  "agent": "pick",
+  "as_of": "2026-05-18",
+  "rule_version": "pick-2026-05-18",
+  "generated_at": "2026-05-18T16:08:35.158630Z",
+  "signals": [
+    {
+      "ts_code": "920179",
+      "signal_date": "2026-05-18",
+      "tech_score": 79.0,
+      "composite_score": 68.8,
+      "verdict": "偏多",
+      "signals": [
+        "均线多头排列（MA5>MA20>MA60）"
+      ]
+    },
+    {
+      "ts_code": "920510",
+      "signal_date": "2026-05-18",
+      "tech_score": 79.0,
+      "composite_score": 68.8,
+      "verdict": "偏多",
+      "signals": [
+        "均线多头排列（MA5>MA20>MA60）"
+      ]
+    },
+    {
+      "ts_code": "920033",
+      "signal_date": "2026-05-18",
+      "tech_score": 79.0,
+      "composite_score": 68.8,
+      "verdict": "偏多",
+      "signals": [
+        "均线多头排列（MA5>MA20>MA60）"
+      ]
+    }
+  ]
+}

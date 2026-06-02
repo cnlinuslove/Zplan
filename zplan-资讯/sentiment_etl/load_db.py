@@ -5,7 +5,7 @@ from datetime import datetime
 import pandas as pd
 from sqlalchemy.dialects.sqlite import insert
 
-from models import FinancialAlert, GlobalNews, MarketSentiment, SessionLocal
+from zplan_shared.models import FinancialAlert, GlobalNews, MarketSentiment, SessionLocal
 from sentiment_etl.hashing import sha256_hex
 
 

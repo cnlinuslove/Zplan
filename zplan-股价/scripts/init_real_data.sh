@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# 首次真实数据烟测：清演示种子 + 拉前 N 只 A 股近 120 日（腾讯源，东财限流时可用）
+# 烟测：清 demo + A.1 拉前 N 只（日线源见 AKSHARE_DAILY_PROVIDER）
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 LIMIT="${1:-5}"
 [[ -x .venv/bin/python ]] || ./scripts/bootstrap_env.sh
-exec .venv/bin/python main.py --init --limit "$LIMIT"
+.venv/bin/python scripts/check_akshare_connectivity.py --quick --require any
+exec .venv/bin/python main.py --a1 --init --limit "$LIMIT" --realign-source

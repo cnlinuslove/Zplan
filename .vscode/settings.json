@@ -1,0 +1,33 @@
+{
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": [
+    "${workspaceFolder:共享}/src"
+  ],
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.cwd": "${workspaceFolder}",
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/*.db": true,
+    "**/*.db-wal": true,
+    "**/*.db-shm": true
+  },
+  "terminal.integrated.env.osx": {
+    "ZPLAN_ROOT": "${workspaceFolder:资讯}"
+  },
+  "terminal.integrated.cwd": "${workspaceFolder:资讯}",
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "ruff.configuration": "${workspaceFolder:共享}/pyproject.toml"
+}

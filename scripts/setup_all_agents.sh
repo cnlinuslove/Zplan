@@ -25,7 +25,12 @@ if [[ "${1:-}" != "--skip-demo" ]]; then
 fi
 
 echo ">> 选股 / 回测 烟测"
-"${ROOT}/zplan-选股/.venv/bin/python" "${ROOT}/zplan-选股/main.py" --top 3
-"${ROOT}/zplan-回测/.venv/bin/python" "${ROOT}/zplan-回测/main.py" --code 000001
+bash "${ROOT}/zplan-选股/scripts/smoke.sh"
+"${ROOT}/zplan-回测/.venv/bin/python" "${ROOT}/zplan-回测/main.py" smoke --code 000001
+echo ">> 安装每日定时（资讯 + 股价，macOS LaunchAgent）"
+chmod +x "${ROOT}/zplan-资讯/scripts/"*.sh "${ROOT}/zplan-股价/scripts/"*.sh 2>/dev/null || true
+bash "${ROOT}/zplan-资讯/scripts/install_daily_news_launchagent.sh" || true
+bash "${ROOT}/zplan-股价/scripts/install_daily_prices_launchagent.sh" || true
 echo ""
-echo "完成。正式行情请在网络可用时： cd zplan-股价 && .venv/bin/python main.py"
+echo "完成。正式行情： cd zplan-股价 && .venv/bin/python main.py"
+echo "每日自动更新日志： zplan-资讯/logs/cron_daily_prices.log / cron_daily_news.log"

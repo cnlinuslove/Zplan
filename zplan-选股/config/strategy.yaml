@@ -1,0 +1,51 @@
+version: "1"
+rule_version: "pick-2026-05-theme"
+
+scan:
+  min_bars: 60
+  min_score: 55.0
+  min_turnover_rate: 0.5
+  min_volume: 0
+  exclude_st: true
+  exclude_bj: false
+  prefilter_top_multiplier: 5
+
+weights:
+  technical: 0.52
+  financial: 0.15
+  news: 0.23          # 偏题材：提高资讯/舆情权重
+  industry_relative: 0.10
+
+filters:
+  max_pe_ttm: null
+  min_total_mv: null
+  max_total_mv: null
+  max_ret_20d: 10.0   # 超过则 init-rule/扫描预筛直接剔除；5~10% 规则降分
+
+signals:
+  require_any: []
+
+intraday:
+  afternoon_volume_share_bonus: 3
+  volume_ratio_high_bonus: 4
+  volume_ratio_high_threshold: 1.3
+
+market_health:
+  min_panel_rows: 300
+  max_stale_days: 3
+
+llm:
+  enabled: true
+  model: gemini-2.5-pro
+  scan_brief: true
+
+rule_init:
+  llm_top_n: 300
+  llm_batch_size: 10   # 每批简评只数
+
+# 最终排序：LLM 为主，规则为辅（回测 llm-eval 可校正权重）
+ranking:
+  mode: llm_primary       # llm_primary | blend | rule_primary
+  llm_weight: 0.75        # mode=blend 时生效
+  rule_weight: 0.25
+  resort_after_llm: true  # LLM 简评后按最终分重排再写入 rank

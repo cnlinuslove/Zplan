@@ -325,6 +325,127 @@ def summarize_news_with_gemini(
     return summary, sentiment
 
 
+_DIGEST_FLASH_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "overview": {
+            "type": "string",
+            "description": "3-5 句中文宏观/市场综述，归纳下列快讯的共性主题与影响，禁止逐条复读标题。",
+        },
+        "highlights": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "takeaway": {
+                        "type": "string",
+                        "description": "一条完整中文要点，40-90 字，改写归纳勿照抄标题。",
+                    },
+                    "source_index": {
+                        "type": "integer",
+                        "description": "对应输入快讯编号，从 1 开始。",
+                    },
+                },
+                "required": ["takeaway", "source_index"],
+            },
+            "description": "3-5 条要点，每条对应一条 source_index。",
+        },
+    },
+    "required": ["overview", "highlights"],
+}
+
+
+@retry(
+    wait=wait_exponential(multiplier=2, min=3, max=55),
+    stop=stop_after_attempt(4),
+    retry=retry_if_exception(_gemini_should_retry),
+    reraise=True,
+)
+def summarize_flash_digest_with_gemini(
+    items: list[dict[str, str | None]],
+    *,
+    max_items: int = 8,
+) -> dict[str, Any]:
+    """东财快讯 → 简报综述（含要点与来源编号，链接由调用方拼接）。"""
+    if not gemini_available():
+        raise GeminiSummaryError("GEMINI_API_KEY not configured")
+
+    lines: list[str] = []
+    for idx, item in enumerate(items[:max_items], start=1):
+        title = _clip(item.get("title") or "", 120)
+        summary = _clip(item.get("summary") or "", 200)
+        lines.append(f"[{idx}] 标题: {title}\n摘要: {summary}")
+
+    prompt = f"""你是 A 股/宏观资讯编辑。以下为东方财富全球快讯（编号 [1]、[2]…）。
+
+输出合法 JSON（无 markdown 围栏）：
+{{
+  "overview": "3-5 句中文综述：归纳主题、影响面、与 A 股/港股的关联；不得逐条罗列标题。",
+  "highlights": [
+    {{"takeaway": "一句改写要点", "source_index": 1}}
+  ]
+}}
+
+要求：
+- highlights 3-5 条，source_index 必须对应下方编号
+- 禁止复制标题超过 12 个连续汉字
+- 字符串内少用英文双引号
+
+快讯：
+{chr(10).join(lines) if lines else "(无)"}"""
+
+    url = f"{GEMINI_API_BASE_URL.rstrip('/')}/models/{GEMINI_MODEL}:generateContent"
+    _pace_gemini_http()
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "safetySettings": _GEMINI_SAFETY_SETTINGS,
+        "generationConfig": {
+            "temperature": 0.25,
+            "maxOutputTokens": max(768, GEMINI_MAX_OUTPUT_TOKENS),
+            "responseMimeType": "application/json",
+            "responseSchema": _DIGEST_FLASH_SCHEMA,
+        },
+    }
+    resp = _gemini_http_post(
+        url,
+        json=payload,
+        headers={"x-goog-api-key": GEMINI_API_KEY},
+        timeout=GEMINI_TIMEOUT_SECONDS,
+    )
+    if resp.status_code >= 400:
+        raise GeminiSummaryError(f"gemini http {resp.status_code}: {resp.text[:300]}")
+
+    body = resp.json()
+    candidates = body.get("candidates") or []
+    if not candidates:
+        raise GeminiSummaryError("gemini returned no candidates")
+    text_out = "".join(
+        part.get("text", "")
+        for part in ((candidates[0].get("content") or {}).get("parts") or [])
+    ).strip()
+    if not text_out:
+        raise GeminiSummaryError("gemini empty digest response")
+
+    parsed = _extract_json_block(text_out)
+    overview = str(parsed.get("overview", "")).strip()
+    highlights_raw = parsed.get("highlights") or []
+    highlights: list[dict[str, Any]] = []
+    if isinstance(highlights_raw, list):
+        for h in highlights_raw:
+            if not isinstance(h, dict):
+                continue
+            takeaway = str(h.get("takeaway", "")).strip()
+            try:
+                source_index = int(h.get("source_index", 0))
+            except (TypeError, ValueError):
+                continue
+            if takeaway and source_index >= 1:
+                highlights.append({"takeaway": takeaway, "source_index": source_index})
+    if not overview and not highlights:
+        raise GeminiSummaryError("gemini empty digest overview/highlights")
+    return {"overview": overview, "highlights": highlights[:6]}
+
+
 def _answer_info_question_http(prompt: str) -> str:
     url = f"{GEMINI_API_BASE_URL.rstrip('/')}/models/{GEMINI_MODEL}:generateContent"
     _pace_gemini_http()

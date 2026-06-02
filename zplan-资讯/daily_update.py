@@ -9,6 +9,8 @@ from pathlib import Path
 from agents.news_agent import run_news_cycle
 from config import NEWS_SCHEDULE_HOURS
 
+# 完整每日资讯（ETL+关联+X）请用: python daily_news_job.py 或 scripts/run_daily_news.sh
+
 
 def setup_logging() -> None:
     log_dir = Path(__file__).resolve().parent / "logs"

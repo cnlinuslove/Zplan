@@ -31,9 +31,8 @@ def list_localhost_listen_ports() -> list[int]:
     try:
         out = subprocess.check_output(
             ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"],
-            text=True,
             timeout=12,
-        )
+        ).decode("utf-8", errors="replace")
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         return []
     ports: set[int] = set()

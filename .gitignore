@@ -4,6 +4,8 @@
 # 密钥与本地配置
 .env
 .env.*.local
+.claude/settings.local.json
+.zplan_env.sh
 
 # Python
 __pycache__/
@@ -23,6 +25,9 @@ build/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# 本地行情/分时 parquet（由 ETL 生成，勿提交）
+**/parquet/
 
 # 运行日志
 logs/*.log

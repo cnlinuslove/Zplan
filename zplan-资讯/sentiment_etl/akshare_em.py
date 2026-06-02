@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import date, time as dtime
 from typing import Iterable
@@ -29,6 +30,14 @@ _AK_NORTHBOUND_HIST = "stock_hsgt_hist_em"
 _AK_NORTHBOUND_MIN = "stock_hsgt_fund_min_em"
 _AK_MARGIN_ACCOUNT = "stock_margin_account_info"
 _AK_INDEX_HIST = "index_zh_a_hist"
+_AK_INDEX_TX = "stock_zh_index_daily_tx"
+
+# 东财 index_zh_a_hist 需 push2 映射表；不可用时走腾讯日线
+_INDEX_TX_SYMBOL: dict[str, str] = {
+    "000001": "sh000001",
+    "399001": "sz399001",
+    "399006": "sz399006",
+}
 
 
 def _sleep_rate() -> None:
@@ -229,13 +238,80 @@ def fetch_em_margin_market_factors_df(max_rows: int = 120) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _index_turnover_rows_from_em(sym: str, start_s: str, end_s: str) -> list[dict]:
+    raw = getattr(ak, _AK_INDEX_HIST)(
+        symbol=str(sym),
+        period="daily",
+        start_date=start_s,
+        end_date=end_s,
+    )
+    if raw is None or raw.empty or "换手率" not in raw.columns:
+        return []
+    out: list[dict] = []
+    for _, r in raw.iterrows():
+        trade_d = pd.to_datetime(r.get("日期"), errors="coerce")
+        if pd.isna(trade_d):
+            continue
+        val = r.get("换手率")
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            continue
+        try:
+            fv = float(val)
+        except (TypeError, ValueError):
+            continue
+        out.append(
+            {
+                "factor_kind": "index_turnover",
+                "as_of_utc": trade_date_to_utc_midnight_trade_bucket(trade_d.date()),
+                "subject": str(sym),
+                "metric_name": "换手率",
+                "metric_value": fv,
+                "extra_json": None,
+            }
+        )
+    return out
+
+
+def _index_turnover_rows_from_tx(sym: str, n_days: int) -> list[dict]:
+    """东财不可用时：腾讯指数日线成交额作情绪代理（metric=成交额）。"""
+    tx_sym = _INDEX_TX_SYMBOL.get(str(sym))
+    if not tx_sym:
+        return []
+    raw = getattr(ak, _AK_INDEX_TX)(symbol=tx_sym)
+    if raw is None or raw.empty:
+        return []
+    tail = raw.tail(n_days + 5)
+    out: list[dict] = []
+    for _, r in tail.iterrows():
+        trade_d = pd.to_datetime(r.get("date"), errors="coerce")
+        if pd.isna(trade_d):
+            continue
+        val = r.get("amount")
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            continue
+        try:
+            fv = float(val)
+        except (TypeError, ValueError):
+            continue
+        out.append(
+            {
+                "factor_kind": "index_turnover",
+                "as_of_utc": trade_date_to_utc_midnight_trade_bucket(trade_d.date()),
+                "subject": str(sym),
+                "metric_name": "成交额",
+                "metric_value": fv,
+                "extra_json": to_json_text({"fallback": "stock_zh_index_daily_tx"}),
+            }
+        )
+    return out
+
+
 def fetch_em_index_turnover_df(
     symbols: Iterable[str] | None = None,
     days: int | None = None,
 ) -> pd.DataFrame:
     """
-    主要指数日频换手率（东财 `index_zh_a_hist`）。
-    长表 metric_name='换手率'；subject 为指数代码。
+    主要指数日频换手率（东财 `index_zh_a_hist`）；失败时用腾讯成交额代理。
     """
     syms = list(symbols) if symbols is not None else list(SENTIMENT_INDEX_SYMBOLS)
     n_days = int(days or SENTIMENT_INDEX_HIST_DAYS)
@@ -244,42 +320,25 @@ def fetch_em_index_turnover_df(
     start_s = start.strftime("%Y%m%d")
     end_s = end.strftime("%Y%m%d")
     rows: list[dict] = []
+    prefer_tx = os.getenv("AKSHARE_INDEX_PREFER_TX", "true").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     for sym in syms:
-        try:
-            raw = getattr(ak, _AK_INDEX_HIST)(
-                symbol=str(sym),
-                period="daily",
-                start_date=start_s,
-                end_date=end_s,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("index_zh_a_hist 失败 symbol=%s: %s", sym, exc)
-            continue
-        if raw is None or raw.empty:
-            continue
-        if "换手率" not in raw.columns:
-            logger.warning("index_zh_a_hist 缺少换手率列 symbol=%s cols=%s", sym, list(raw.columns))
-            continue
-        for _, r in raw.iterrows():
-            trade_d = pd.to_datetime(r.get("日期"), errors="coerce")
-            if pd.isna(trade_d):
-                continue
-            val = r.get("换手率")
-            if val is None or (isinstance(val, float) and pd.isna(val)):
-                continue
+        got: list[dict] = []
+        if not prefer_tx:
             try:
-                fv = float(val)
-            except (TypeError, ValueError):
-                continue
-            rows.append(
-                {
-                    "factor_kind": "index_turnover",
-                    "as_of_utc": trade_date_to_utc_midnight_trade_bucket(trade_d.date()),
-                    "subject": str(sym),
-                    "metric_name": "换手率",
-                    "metric_value": fv,
-                    "extra_json": None,
-                }
-            )
+                got = _index_turnover_rows_from_em(sym, start_s, end_s)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("index_zh_a_hist 失败 symbol=%s: %s", sym, exc)
+        if not got:
+            try:
+                got = _index_turnover_rows_from_tx(sym, n_days)
+                if got:
+                    logger.info("[INFO] 指数 %s 使用腾讯成交额代理 %s 条", sym, len(got))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("stock_zh_index_daily_tx 失败 symbol=%s: %s", sym, exc)
+        rows.extend(got)
         _sleep_rate()
     return pd.DataFrame(rows)

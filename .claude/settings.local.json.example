@@ -1,0 +1,6 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "在此填入 DeepSeek API Key（sk-...）",
+    "ANTHROPIC_API_KEY": "同上，DeepSeek 兼容 Anthropic 需两个变量"
+  }
+}

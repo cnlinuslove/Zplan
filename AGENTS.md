@@ -12,6 +12,17 @@
 
 多根工作区：打开 monorepo 根目录的 `zplan.code-workspace`。
 
+## VS Code + Claude Code（DeepSeek V4）
+
+```bash
+./scripts/setup_vscode_claude.sh
+code zplan.code-workspace
+```
+
+- 交接文档：`CLAUDE.md`（Claude Code 自动读）、`docs/VSCODE_CLAUDE_HANDOFF.md`（完整版）
+- Claude Code 用 DeepSeek：`zplan-资讯/.env` 的 `DEEPSEEK_API_KEY` → `.claude/settings.local.json`
+- 选股/资讯 LLM 仍用 Gemini（同 `.env` 的 `GEMINI_API_KEY`），两套 API 勿混用
+
 ## 一键初始化（已替你跑过可跳过）
 
 在 monorepo 根目录：

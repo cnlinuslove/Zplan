@@ -19,6 +19,7 @@ from wework_client import send_text_message, wework_callback_configured
 logger = logging.getLogger(__name__)
 
 _THINKING = "正在检索资讯，请稍候…"
+_PICK_THINKING = "正在选股分析，请稍候…"
 
 
 def _xml_text(root: ET.Element, tag: str) -> str:
@@ -57,7 +58,15 @@ def _reply_target(parsed: dict[str, str]) -> dict[str, str]:
 
 def _process_and_send(parsed: dict[str, str]) -> None:
     try:
-        result = handle_inbound_text(parsed["content"])
+        content = parsed["content"]
+        try:
+            from pick_wechat import try_handle_pick
+
+            if try_handle_pick(content) is not None:
+                send_text_message(_PICK_THINKING, **_reply_target(parsed))
+        except Exception:
+            pass
+        result = handle_inbound_text(content)
         text = str(result.get("reply_text") or result.get("reply_markdown") or "（无回复内容）")
         send_text_message(text, **_reply_target(parsed))
     except Exception as exc:  # noqa: BLE001

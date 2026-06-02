@@ -41,7 +41,14 @@ def process_wechat_reply_request(body: dict[str, Any]) -> dict[str, Any]:
     if push:
         text = payload.get("reply_text") or payload.get("reply_markdown")
         if text:
-            if payload.get("intent") in ("info_query", "help", "history_latest", "history_7d", "history_topic", "topic_list"):
+            if payload.get("intent", "").startswith("pick") or payload.get("intent") in (
+                "info_query",
+                "help",
+                "history_latest",
+                "history_7d",
+                "history_topic",
+                "topic_list",
+            ):
                 out["pushed"] = push_wechat_text(str(text))
             else:
                 out["pushed"] = push_to_wechat(str(text))

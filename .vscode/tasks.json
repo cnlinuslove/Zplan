@@ -1,0 +1,96 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Z-Plan: 一键初始化 (setup_all_agents)",
+      "type": "shell",
+      "command": "./scripts/setup_all_agents.sh",
+      "options": {
+        "cwd": "${workspaceFolder:资讯}/.."
+      },
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Z-Plan: VS Code + Claude 迁移",
+      "type": "shell",
+      "command": "./scripts/setup_vscode_claude.sh",
+      "options": {
+        "cwd": "${workspaceFolder:资讯}/.."
+      },
+      "group": "build"
+    },
+    {
+      "label": "回测: iterate verify",
+      "type": "shell",
+      "command": ".venv/bin/python main.py iterate verify",
+      "options": {
+        "cwd": "${workspaceFolder:回测}"
+      },
+      "group": "test"
+    },
+    {
+      "label": "回测: iterate full",
+      "type": "shell",
+      "command": ".venv/bin/python main.py iterate full",
+      "options": {
+        "cwd": "${workspaceFolder:回测}"
+      },
+      "group": "test"
+    },
+    {
+      "label": "回测: check-data",
+      "type": "shell",
+      "command": ".venv/bin/python main.py check-data",
+      "options": {
+        "cwd": "${workspaceFolder:回测}"
+      },
+      "group": "test"
+    },
+    {
+      "label": "回测: audit run 8 top10",
+      "type": "shell",
+      "command": ".venv/bin/python main.py audit --run-id 8 --top 10",
+      "options": {
+        "cwd": "${workspaceFolder:回测}"
+      },
+      "group": "test"
+    },
+    {
+      "label": "选股: init-rule",
+      "type": "shell",
+      "command": ".venv/bin/python main.py init-rule",
+      "options": {
+        "cwd": "${workspaceFolder:选股}"
+      },
+      "group": "test"
+    },
+    {
+      "label": "选股: llm-top 300",
+      "type": "shell",
+      "command": ".venv/bin/python main.py llm-top --top 300",
+      "options": {
+        "cwd": "${workspaceFolder:选股}"
+      },
+      "group": "test"
+    },
+    {
+      "label": "股价: catch-up panel",
+      "type": "shell",
+      "command": ".venv/bin/python main.py --catch-up-panel --workers 8",
+      "options": {
+        "cwd": "${workspaceFolder:股价}"
+      },
+      "group": "test"
+    },
+    {
+      "label": "测试: 选股 + 回测 pytest",
+      "type": "shell",
+      "command": "cd zplan-选股 && .venv/bin/pytest tests/ -q && cd ../zplan-回测 && .venv/bin/pytest tests/ -q",
+      "options": {
+        "cwd": "${workspaceFolder:资讯}/.."
+      },
+      "group": "test"
+    }
+  ]
+}

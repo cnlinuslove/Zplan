@@ -43,7 +43,7 @@
 | 涨跌幅 | 动量、涨停池 | `pct_chg` 多为空 | 同上 |
 | 估值截面 PE/PB/市值 | 价值、规模因子 | 无 | Phase B `daily_snapshot` |
 | 财报 ROE、营收增速 | 质量、成长 | 表已建、无 ETL | Phase D `financial_indicators` |
-| 技术指标 MA/MACD/RSI | 策略信号 | 无（也不应默认落库） | Phase A.2 只读计算层 |
+| 技术指标 MA/MACD/RSI | 策略信号 | **日频快照** `daily_features` | Phase A.2 计算 + A.3 物化 |
 | 分钟 / 分时量 | 日内、VWAP | 无 | Phase C（按需） |
 | 行业 / 概念 | 板块轮动 | `stock_list.industry` 未填 | Phase B 扩展列表 ETL |
 | 资讯 / 情绪 | 事件驱动 | 资讯 Agent 已有 | 选股只读关联，非股价 ETL |
@@ -151,11 +151,11 @@ daily_prices  +  intraday Parquet (1m+5m)  +  financial_alerts / global_news
 - 输入：`get_bars(ts_code, start=..., end=...)`；输出：原 DataFrame + 指标列。
 - 选股侧：`panel = get_panel(); bars = get_bars(...); features = add_ma(bars, 20)`。
 
-**A.3 物化截面（可选，横截面策略加速）：**
+**A.3 物化快照（已实现）：**
 
-- 表 `daily_features`：`(ts_code, trade_date, feature_name, value)` 或宽表若干列。
-- 由股价 Agent 在日更后跑批生成，或选股首次扫描时 lazy 写入。
-- **仅在 A.2 性能不够时启用。**
+- 表 `daily_features`：每 `(ts_code, trade_date)` 一行，列与 `features.SNAPSHOT_*_KEYS` 一致。
+- 日更：`scripts/materialize_daily_features.py`（批量 `scan_universe_features`，约 1～3 分钟）。
+- 只读：`feature_store.get_features_panel(as_of)`；选股扫描优先读表，不足再现场算。
 
 ---
 
@@ -293,7 +293,9 @@ summarize_recent_intraday(ts_code)
 | `ZPLAN_ROOT` | 数据根目录，默认 `../zplan-资讯` |
 | `DB_URL` | 默认 `sqlite:///{ZPLAN_ROOT}/zplan.db` |
 | `AKSHARE_RATE_LIMIT_SECONDS` | 拉取间隔，默认 2 |
-| `AKSHARE_USE_SYSTEM_PROXY` | 默认 `false`；走 Clash 时设 `true` |
+| `AKSHARE_USE_SYSTEM_PROXY` | 默认 `true`（读 macOS 系统代理，如 Clash 7897） |
+| `AKSHARE_DIRECT` | `true` 时强制直连、不用代理 |
+| `AKSHARE_ALLOW_TX_FALLBACK` | 默认 `false`；**禁止**东财失败时降级腾讯 |
 | `PARQUET_ROOT` | 默认 `{ZPLAN_ROOT}/parquet` |
 | `DAILY_BOOTSTRAP_CALENDAR_DAYS` | 新标的日线回溯，默认 400 |
 | `RECENT_INTRADAY_CALENDAR_DAYS` | 5 分钟线窗口，默认 14 |

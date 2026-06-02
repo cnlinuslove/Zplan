@@ -40,6 +40,9 @@ def resolve_db_url(raw: str | None = None) -> str:
 
 DB_URL = resolve_db_url()
 AKSHARE_RATE_LIMIT_SECONDS = float(os.getenv("AKSHARE_RATE_LIMIT_SECONDS", "3"))
+# 日线数据源（全库统一，见 data_sources.py）：
+# em=东财 stock_zh_a_hist；tx=腾讯 stock_zh_a_hist_tx；sina=新浪 stock_zh_a_daily
+# 已废弃：按票混源回退请勿开启
 AKSHARE_ALLOW_TX_FALLBACK = os.getenv("AKSHARE_ALLOW_TX_FALLBACK", "false").lower() == "true"
 AKSHARE_FAIL_CIRCUIT_THRESHOLD = int(os.getenv("AKSHARE_FAIL_CIRCUIT_THRESHOLD", "3"))
 AKSHARE_FAIL_CIRCUIT_SLEEP_SECONDS = int(os.getenv("AKSHARE_FAIL_CIRCUIT_SLEEP_SECONDS", "20"))
@@ -47,6 +50,8 @@ AKSHARE_FAIL_CIRCUIT_SLEEP_SECONDS = int(os.getenv("AKSHARE_FAIL_CIRCUIT_SLEEP_S
 # Phase A.1：日线回溯 + 近端分时（Parquet）
 PARQUET_ROOT = Path(os.getenv("PARQUET_ROOT", str(BASE_DIR / "parquet"))).expanduser().resolve()
 DAILY_BOOTSTRAP_CALENDAR_DAYS = int(os.getenv("DAILY_BOOTSTRAP_CALENDAR_DAYS", "400"))
+# 东财日线单次请求跨度（天），过长易 RemoteDisconnected / 限流
+AKSHARE_DAILY_CHUNK_DAYS = int(os.getenv("AKSHARE_DAILY_CHUNK_DAYS", "90"))
 RECENT_INTRADAY_CALENDAR_DAYS = int(os.getenv("RECENT_INTRADAY_CALENDAR_DAYS", "14"))
 # 东财 1 分钟 trends2 接口仅约 5 个交易日；5/15 分钟 K 线可覆盖更长区间
 INTRADAY_FINE_PERIOD = os.getenv("INTRADAY_FINE_PERIOD", "1")
@@ -69,7 +74,7 @@ X_FAILOVER_TO_PLACEHOLDER = os.getenv("X_FAILOVER_TO_PLACEHOLDER", "true").lower
 
 # LLM summary (Gemini)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
 GEMINI_API_BASE_URL = os.getenv(
     "GEMINI_API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
 )
@@ -116,6 +121,9 @@ SENTIMENT_INDEX_HIST_DAYS = int(os.getenv("SENTIMENT_INDEX_HIST_DAYS", "30"))
 SENTIMENT_NORTHBOUND_INTRADAY = os.getenv("SENTIMENT_NORTHBOUND_INTRADAY", "true").lower() == "true"
 SENTIMENT_WECHAT_PUSH = os.getenv("SENTIMENT_WECHAT_PUSH", "true").lower() == "true"
 SENTIMENT_WECHAT_SAMPLE_PER_SOURCE = int(os.getenv("SENTIMENT_WECHAT_SAMPLE_PER_SOURCE", "4"))
+# brief=用户可读简报；debug=全源 ETL 样例（运维）
+SENTIMENT_WECHAT_STYLE = os.getenv("SENTIMENT_WECHAT_STYLE", "brief").strip().lower()
+SENTIMENT_WECHAT_DIGEST_LLM = os.getenv("SENTIMENT_WECHAT_DIGEST_LLM", "true").lower() == "true"
 INFO_QUERY_LIVE_FETCH = os.getenv("INFO_QUERY_LIVE_FETCH", "true").lower() == "true"
 INFO_QUERY_LIVE_MAX_KEYWORDS = int(os.getenv("INFO_QUERY_LIVE_MAX_KEYWORDS", "3"))
 INFO_QUERY_MAX_SOURCES = int(os.getenv("INFO_QUERY_MAX_SOURCES", "5"))

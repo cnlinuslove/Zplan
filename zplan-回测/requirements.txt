@@ -1,1 +1,2 @@
 -e ../zplan-共享
+pytest>=8.0

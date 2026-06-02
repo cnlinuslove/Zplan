@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import hashlib
 import json
 import logging
@@ -537,15 +538,19 @@ def format_topic_for_wechat(topic_key: str, display_name: str, summary: str, sen
 def push_to_wechat(message: str, *, mode: str | None = None) -> bool:
     import requests
 
+    from wechat_limits import WECHAT_MARKDOWN_MAX_BYTES, WECHAT_TEXT_MAX_BYTES, truncate_wechat_utf8
+
     if not WECHAT_PUSH_WEBHOOK:
         logger.warning("[WARN] 未配置 WECHAT_PUSH_WEBHOOK，跳过推送。")
         return False
 
     use_mode = (mode or WECHAT_PUSH_MODE).lower()
     if use_mode == "markdown":
-        payload = {"msgtype": "markdown", "markdown": {"content": message[:3500]}}
+        content = truncate_wechat_utf8(message, WECHAT_MARKDOWN_MAX_BYTES)
+        payload = {"msgtype": "markdown", "markdown": {"content": content}}
     else:
-        payload = {"msgtype": "text", "text": {"content": message[:1800]}}
+        content = truncate_wechat_utf8(message, WECHAT_TEXT_MAX_BYTES)
+        payload = {"msgtype": "text", "text": {"content": content}}
     try:
         resp = requests.post(WECHAT_PUSH_WEBHOOK, json=payload, timeout=10)
         resp.raise_for_status()
@@ -597,13 +602,17 @@ def query_summary_last_days(days: int = 7, topic_key: str | None = None) -> list
         return list(session.execute(stmt).scalars())
 
 
-def run_news_cycle(now: datetime | None = None) -> dict[str, int]:
+def run_news_cycle(now: datetime | None = None, *, push_wechat: bool = True) -> dict[str, int]:
     init_db()
     seed_default_topics()
 
     cycle_end = _ensure_utc(now or datetime.now(timezone.utc))
     cycle_start = cycle_end - timedelta(hours=NEWS_WINDOW_HOURS)
     topics = get_enabled_topics()
+    smoke = os.getenv("SMOKE_TEST", "").lower() in ("1", "true", "yes")
+    if smoke:
+        topics = topics[:2]
+        logger.info("[INFO] SMOKE_TEST：仅跑前 %s 个 topic，跳过微信推送", len(topics))
     use_x_api = can_reach_x_api() if X_BEARER_TOKEN else False
 
     logger.info("[INFO] 启动资讯周期任务，topics=%s, use_x_api=%s", len(topics), use_x_api)
@@ -637,11 +646,11 @@ def run_news_cycle(now: datetime | None = None) -> dict[str, int]:
             topic.topic_key, topic.display_name, summary, sentiment
         )
         digest_blocks.append(block)
-        if not WECHAT_PUSH_DIGEST:
+        if push_wechat and not smoke and not WECHAT_PUSH_DIGEST:
             pushed += 1 if push_to_wechat(block) else 0
         logger.info("[INFO] topic=%s 完成，run_id=%s", topic.topic_key, run_id)
 
-    if WECHAT_PUSH_DIGEST and digest_blocks:
+    if push_wechat and not smoke and WECHAT_PUSH_DIGEST and digest_blocks:
         header = f"## Z-Plan 资讯简报 ({cycle_end.strftime('%m-%d %H:%M')} UTC)"
         digest = header + "\n\n" + "\n\n".join(digest_blocks)
         pushed += 1 if push_to_wechat(digest) else 0

@@ -6,6 +6,8 @@ import requests
 
 from config import WECHAT_PUSH_WEBHOOK
 
+from wechat_limits import WECHAT_TEXT_MAX_BYTES, truncate_wechat_utf8
+
 logger = logging.getLogger(__name__)
 
 
@@ -13,7 +15,10 @@ def push_wechat_text(message: str) -> bool:
     if not WECHAT_PUSH_WEBHOOK:
         logger.warning("未配置 WECHAT_PUSH_WEBHOOK，跳过推送。")
         return False
-    payload = {"msgtype": "text", "text": {"content": message[:1800]}}
+    payload = {
+        "msgtype": "text",
+        "text": {"content": truncate_wechat_utf8(message, WECHAT_TEXT_MAX_BYTES)},
+    }
     try:
         resp = requests.post(WECHAT_PUSH_WEBHOOK, json=payload, timeout=10)
         resp.raise_for_status()

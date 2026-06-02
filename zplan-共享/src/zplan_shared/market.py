@@ -8,7 +8,7 @@ import pandas as pd
 from sqlalchemy import func, select
 
 from zplan_shared.intraday_store import read_intraday_parquet
-from zplan_shared.models import DailyPrice, SessionLocal, init_db
+from zplan_shared.models import DailyPrice, SessionLocal, StockConceptMember, init_db
 
 DEFAULT_ADJUST_TYPE = "qfq"
 BAR_COLUMNS = (
@@ -49,8 +49,36 @@ def _parse_date(value: str | date | datetime | None) -> date | None:
     return parsed.date()
 
 
-def latest_trade_date(*, adjust_type: str = DEFAULT_ADJUST_TYPE) -> date | None:
+def latest_panel_trade_date(
+    *,
+    adjust_type: str = DEFAULT_ADJUST_TYPE,
+    min_symbols: int = 1000,
+) -> date | None:
+    """最新「截面完整」的交易日（避免仅同步少量自选导致 max(date) 失真）。"""
     init_db()
+    with SessionLocal() as session:
+        row = session.execute(
+            select(DailyPrice.trade_date)
+            .where(DailyPrice.adjust_type == adjust_type)
+            .group_by(DailyPrice.trade_date)
+            .having(func.count(DailyPrice.ts_code) >= min_symbols)
+            .order_by(DailyPrice.trade_date.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    return row
+
+
+def latest_trade_date(
+    *,
+    adjust_type: str = DEFAULT_ADJUST_TYPE,
+    min_panel_symbols: int = 1000,
+) -> date | None:
+    init_db()
+    panel_latest = latest_panel_trade_date(
+        adjust_type=adjust_type, min_symbols=min_panel_symbols
+    )
+    if panel_latest is not None:
+        return panel_latest
     with SessionLocal() as session:
         return session.execute(
             select(func.max(DailyPrice.trade_date)).where(DailyPrice.adjust_type == adjust_type)
@@ -147,6 +175,79 @@ def as_of_close(
             )
         ).scalar_one_or_none()
     return float(row) if row is not None else None
+
+
+def get_history_window(
+    *,
+    end: str | date | None = None,
+    calendar_days: int = 120,
+    ts_codes: Iterable[str] | None = None,
+    adjust_type: str = DEFAULT_ADJUST_TYPE,
+) -> pd.DataFrame:
+    """批量日线（长表）：用于全市场预过滤与 ``features.scan_universe``。"""
+    init_db()
+    end_d = _parse_date(end) if end is not None else latest_trade_date(adjust_type=adjust_type)
+    if end_d is None:
+        return pd.DataFrame()
+
+    start_d = end_d - timedelta(days=calendar_days)
+
+    stmt = select(DailyPrice).where(
+        DailyPrice.adjust_type == adjust_type,
+        DailyPrice.trade_date >= start_d,
+        DailyPrice.trade_date <= end_d,
+    )
+    if ts_codes is not None:
+        codes = [resolve_ts_code(c) for c in ts_codes]
+        if codes:
+            stmt = stmt.where(DailyPrice.ts_code.in_(codes))
+
+    with SessionLocal() as session:
+        rows = session.execute(stmt.order_by(DailyPrice.ts_code, DailyPrice.trade_date)).scalars().all()
+
+    if not rows:
+        return pd.DataFrame()
+
+    records = [
+        {"ts_code": r.ts_code, **{col: getattr(r, col) for col in BAR_COLUMNS}}
+        for r in rows
+    ]
+    return pd.DataFrame(records)
+
+
+def get_stock_concepts(ts_code: str) -> list[str]:
+    """单票概念/题材名称列表（来自 ``stock_concept_members``，需先 sync）。"""
+    init_db()
+    code = resolve_ts_code(ts_code)
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(StockConceptMember.concept_name)
+            .where(StockConceptMember.ts_code == code)
+            .order_by(StockConceptMember.concept_name)
+        ).all()
+    return [r[0] for r in rows]
+
+
+def get_concepts_panel() -> pd.DataFrame:
+    """全市场概念题材宽表：``ts_code`` + ``concepts``（分号拼接）。"""
+    init_db()
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(StockConceptMember.ts_code, StockConceptMember.concept_name).order_by(
+                StockConceptMember.ts_code, StockConceptMember.concept_name
+            )
+        ).all()
+    if not rows:
+        return pd.DataFrame(columns=["ts_code", "concepts", "concept_count"])
+    grouped: dict[str, list[str]] = {}
+    for ts_code, name in rows:
+        grouped.setdefault(ts_code, []).append(name)
+    return pd.DataFrame(
+        [
+            {"ts_code": c, "concepts": ";".join(names), "concept_count": len(names)}
+            for c, names in sorted(grouped.items())
+        ]
+    )
 
 
 def get_minute_bars(
