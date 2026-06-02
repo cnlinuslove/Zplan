@@ -1,6 +1,6 @@
 # Z-Plan（my_stock_ai monorepo）
 
-多 Agent 量化资讯与行情流水线。目录职责见 [AGENTS.md](AGENTS.md)；行情架构见 [zplan-共享/docs/DATA_ARCHITECTURE.md](zplan-共享/docs/DATA_ARCHITECTURE.md)。
+Agentic Stock Assistant — 多 Agent 量化资讯与行情流水线。目录职责见 [AGENTS.md](AGENTS.md)；行情架构见 [zplan-共享/docs/DATA_ARCHITECTURE.md](zplan-共享/docs/DATA_ARCHITECTURE.md)。
 
 | 目录 | 职责 |
 |------|------|
