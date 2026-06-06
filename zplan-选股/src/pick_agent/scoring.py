@@ -137,25 +137,25 @@ def apply_momentum_cap(
     max_ret_20d: float | None = 5.0,
     vol_ratio20: float | None = None,
 ) -> float:
-    """过热时压低综合/技术分上限；缩量上涨额外惩罚。"""
+    """过热时压低综合/技术分上限；缩量上涨额外惩罚。
+
+    预筛已剔除 ret_20d>5%，此处对 3-5% 区间温和限上限，避免分数底板效应。
+    """
     s = float(score)
     if ret_20d is None:
         return round(max(0.0, min(100.0, s)), 1)
     r = float(ret_20d)
     cap_val = float(max_ret_20d) if max_ret_20d is not None else 5.0
     if r > cap_val:
-        s = min(s, 52.0)
-    elif r > 7:
-        s = min(s, 58.0)
-    elif r > 5:
-        s = min(s, 65.0)
+        s = min(s, 55.0)          # 理论上预筛已剔除，兜底
+    elif r > 4:
+        s = min(s, 68.0)          # was 65，放宽至 68
     elif r > 3:
-        s = min(s, 72.0)
+        s = min(s, 75.0)          # was 72，放宽至 75
 
-    # 缩量上涨：ML 证实 body_last（K 线实体）+ vol_ratio（量比）是前五大特征
-    # 涨了但没量 → 诱多概率更高
+    # 缩量上涨：ML 证实 body_last + vol_ratio 是前五大特征
     if r > 2 and vol_ratio20 is not None and float(vol_ratio20) < 0.8:
-        s = max(45.0, s - 8.0)
+        s = max(48.0, s - 7.0)    # was max(45, -8)，稍温和
 
     return round(max(0.0, min(100.0, s)), 1)
 
@@ -171,7 +171,7 @@ def verdict_from_score(score: float) -> str:
 def quick_technical_score(features: dict[str, float | None]) -> float:
     """向量化预筛用的轻量技术分（与 analyze_technical 共用 P0 快照字段）。
 
-    2026-06 改进：减弱追涨奖励，奖励均值回归，惩罚缩量上涨。
+    2026-06：减弱追涨奖励，奖励均值回归，惩罚缩量上涨。
     """
     score = 50.0
     ma5, ma20, ma60 = features.get("ma5"), features.get("ma20"), features.get("ma60")
@@ -197,12 +197,8 @@ def quick_technical_score(features: dict[str, float | None]) -> float:
             score += 3            # 中度回调→低吸机会
         elif -3 <= ret20 <= 3:
             score += 4            # 横盘整理/低吸区
-        elif ret20 > 12:
-            score -= 6            # 过高涨幅惩罚
-        elif ret20 > 8:
-            score -= 4
         elif ret20 > 5:
-            score -= 2
+            score -= 2            # 追涨惩罚（预筛已剔除 >5%）
     hist = features.get("macd_hist")
     if hist is not None and hist > 0:
         score += 4

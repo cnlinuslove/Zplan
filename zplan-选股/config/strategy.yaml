@@ -23,11 +23,11 @@ filters:
   max_ret_20d: 5.0    # ML r=-0.56：>5% 反转概率陡升，预筛直接剔除
   max_high_60d_pct: 0.95  # 接近 60 日高点 >95% 剔除（追高空间有限）
 
-# 行业分散：防止热门行业垄断 Top 排名
+# 行业分散：防止极端集中，但不过度分散（熊市中弱行业拖累收益）
 diversification:
-  max_per_industry: 8       # Top300 同一行业最多 N 只
-  final_max_per_industry: 3  # 最终展示同一行业最多 N 只
-  min_industries: 5          # Top 至少覆盖 N 个行业
+  max_per_industry: 20       # Top300 同一行业最多 N 只（仅防极端集中）
+  final_max_per_industry: 5   # 最终展示同一行业最多 N 只
+  min_industries: 3           # Top 至少覆盖 N 个行业
 
 # 风险过滤：程序侧硬约束
 risk_filters:
