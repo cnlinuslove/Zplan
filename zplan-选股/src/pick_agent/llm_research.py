@@ -1,4 +1,4 @@
-"""Gemini 驱动的个股深度研究与打分。"""
+"""DeepSeek 驱动的个股深度研究与打分。"""
 from __future__ import annotations
 
 import json
@@ -7,13 +7,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from zplan_shared.config import GEMINI_MODEL
+from zplan_shared.config import DEEPSEEK_MODEL, GEMINI_MODEL
 from zplan_shared.llm.gemini import (
     GeminiError,
     gemini_available,
     generate_json_with_gemini,
     pop_usage,
 )
+
+# 实际使用的 LLM 模型
+_LLM_MODEL = DEEPSEEK_MODEL or GEMINI_MODEL
 from zplan_shared.market import get_bars
 
 from pick_agent.concept_tags import concepts_for_code
@@ -159,11 +162,10 @@ def research_with_llm(
     strategy: PickStrategy | None = None,
     skip_health_check: bool = False,
 ) -> dict[str, Any]:
-    """规则引擎打底 + Gemini 深度研究与打分。"""
+    """规则引擎打底 + LLM 深度研究与打分。"""
     if not gemini_available():
         raise GeminiError(
-            "未配置 GEMINI_API_KEY。请在 zplan-资讯/.env 设置 GEMINI_API_KEY，"
-            "可选 GEMINI_MODEL=gemini-2.5-pro"
+            "未配置 DEEPSEEK_API_KEY。请在 zplan-资讯/.env 设置 DEEPSEEK_API_KEY"
         )
 
     strat = strategy or load_strategy()
@@ -181,7 +183,7 @@ def research_with_llm(
         response_schema=_RESEARCH_SCHEMA,
         temperature=0.35,
         max_output_tokens=8192,
-        model=strat.llm_model or GEMINI_MODEL,
+        model=strat.llm_model or _LLM_MODEL,
     )
     usage = pop_usage(llm)
 
@@ -192,7 +194,7 @@ def research_with_llm(
         **base,
         "pipeline": ["rule_engine", "llm_research"],
         "llm": {
-            "model": strat.llm_model or GEMINI_MODEL,
+            "model": strat.llm_model or _LLM_MODEL,
             "enabled": True,
             "usage": usage,
             **llm,
@@ -329,19 +331,39 @@ _SCAN_BRIEF_SCHEMA: dict[str, Any] = {
                     "ts_code": {"type": "string"},
                     "trend_one_liner": {
                         "type": "string",
-                        "description": "一句话股价走势判断，须含价位或涨跌幅依据",
+                        "description": "一句话走势判断，须引用具体数值（ret_20d/vol_ratio20/KDJ/signals），≤60字，含题材、技术信号、风险提示",
                     },
-                    "composite_score": {"type": "number"},
+                    "risk_flags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "追高风险(涨幅过高)",
+                                "量价背离(缩量上涨)",
+                                "接近阶段高点",
+                                "超买区域(KDJ/RSI)",
+                                "基本面恶化",
+                                "题材退潮",
+                                "监管/减持风险",
+                                "无明显风险",
+                            ],
+                        },
+                        "description": "1-3 项具体风险；无风险填['无明显风险']",
+                    },
+                    "confidence_adjustment": {
+                        "type": "number",
+                        "description": "相对规则分的置信调整：-5 到 +3，默认 0；仅在确有证据时微调",
+                    },
                     "recommendation": {
                         "type": "string",
                         "enum": ["强烈关注", "关注", "观望", "谨慎", "回避"],
                     },
                     "vs_rule_engine": {
                         "type": "string",
-                        "description": "与规则引擎分数差异的一句话说明",
+                        "description": "与规则引擎差异说明，≤30字",
                     },
                 },
-                "required": ["ts_code", "trend_one_liner", "composite_score", "recommendation"],
+                "required": ["ts_code", "trend_one_liner", "risk_flags", "confidence_adjustment", "recommendation"],
             },
         },
     },
@@ -368,6 +390,7 @@ def _compact_pick_row(p: dict[str, Any]) -> dict[str, Any]:
         "close": close,
         "ret_20d": p.get("ret_20d"),
         "high_60d_pct": p.get("high_60d_pct"),
+        "vol_ratio20": p.get("vol_ratio20"),
         "tech_score": p.get("tech_score"),
         "rule_composite": rule_c,
         "suggested_buy": buy,
@@ -380,57 +403,96 @@ def _compact_pick_row(p: dict[str, Any]) -> dict[str, Any]:
 
 
 _LLM_BRIEF_RULES = """
-【定位】偏题材/概念与资讯催化，**厌恶追高**；默认 composite_score=rule_composite，审慎加分。
+【定位】你是风险审核员，不是评分员。规则引擎已给出综合基准分（rule_composite），你只需：1) 识别具体风险 → risk_flags；2) 微小置信调整 → confidence_adjustment；3) 操作建议 → recommendation。
 
-【题材】
-- concepts 非空：trend_one_liner 须点明 1 个核心题材；news_48h>0 可写「题材+资讯催化」。
-- concept_count=0：写「题材库未覆盖」，不得编造概念名；composite 不得高于 rule_composite。
+【核心约束：你不是在打分，而是在标注风险】
+- confidence_adjustment 默认 0。仅在有明确证据时微调（-5 到 +3）。
+- 发现 risk_flags 中 ≥2 项严重风险（追高/量价背离/接近高点/超买）→ recommendation 最高「观望」。
+- ret_20d>5% 且 vol_ratio20<1.0 → 必须标注「量价背离(缩量上涨)」。
+- ret_20d>7% → 必须标注「追高风险(涨幅过高)」。
+- high_60d_pct>92% → 必须标注「接近阶段高点」。
+- KDJ 的 K>80 或 RSI>70 → 必须标注「超买区域(KDJ/RSI)」。
+- concept_count=0 → 写「题材库未覆盖」，不得编造概念名。
+- 无以上风险 → risk_flags 填 ['无明显风险']，confidence_adjustment 填 0。
 
-【防追高】
-- ret_20d>5%：trend 须写具体涨幅；composite 最高 rule_composite（禁止加分）。
-- ret_20d>8%：须写「追高风险」；recommendation 最高「观望」；composite ≤ rule_composite-5。
-- ret_20d>10% 或 high_60d_pct>0.92：recommendation 倾向「谨慎/回避」；composite ≤ min(rule_composite-10, 70)。
-- close_vs_buy_gap_pct>3%：不得「强烈关注/关注」，最高「观望」。
+【trend_one_liner 要求】
+- 引用 JSON 中具体数值（ret_20d、vol_ratio20、KDJ K/D、signals 等），≤60 字。
+- 若 ret_20d>3% 须写具体涨幅；若有风险须指明风险关键词。
+- 禁止套话：「均线多头排列」「技术形态强势」「走势向好」等空洞描述一律禁止。
 
-【其它】
-- 仅 ret_20d≤5% 且 signals 有放量/突破/金叉时，最多 +3 分。
-- trend_one_liner 须引用 JSON 中具体数值或 signals 原文；vs_rule_engine 说明题材或追高因素。"""
+【vs_rule_engine 要求】
+- 说明风险因素或与规则引擎的差异，≤30 字。
+- 若无明显风险则写「风险可控」。"""
 
 
-def _clamp_brief_review(p: dict[str, Any], br: dict[str, Any]) -> dict[str, Any]:
-    """程序侧封顶 LLM 分与推荐语，防止集体追高抬分。"""
+
+def _apply_risk_penalty(p: dict[str, Any], br: dict[str, Any]) -> dict[str, Any]:
+    """将 LLM 风险标记转化为分数调整，取代旧版分数封顶。
+
+    LLM 不再输出 composite_score，改为 risk_flags + confidence_adjustment。
+    最终 adjusted_score = rule_composite + confidence_adjustment - risk_penalty。
+    """
     out = dict(br)
     rule = float(p.get("rule_composite_score") or p.get("composite_score") or 0)
     ret20 = p.get("ret_20d")
-    gap = p.get("close_vs_buy_gap_pct")
-    if gap is None:
-        buy = p.get("predicted_buy_price") or p.get("suggested_buy")
-        close = p.get("close")
-        if buy and close:
-            gap = round((float(close) - float(buy)) / float(buy) * 100, 2)
+    high_pct = p.get("high_60d_pct")
+    vol_ratio = p.get("vol_ratio20")
 
-    cap = rule + 3.0
+    # LLM 置信调整（小范围：-5 到 +3）
+    confidence_adj = float(br.get("confidence_adjustment", 0))
+    confidence_adj = max(-5.0, min(3.0, confidence_adj))
+
+    # 从 risk_flags 计算额外扣分
+    risk_flags = list(br.get("risk_flags") or [])
+    risk_penalty = 0.0
+    if "追高风险(涨幅过高)" in risk_flags:
+        risk_penalty += 5.0
+    if "量价背离(缩量上涨)" in risk_flags:
+        risk_penalty += 4.0
+    if "接近阶段高点" in risk_flags:
+        risk_penalty += 3.0
+    if "超买区域(KDJ/RSI)" in risk_flags:
+        risk_penalty += 3.0
+    if "监管/减持风险" in risk_flags:
+        risk_penalty += 6.0
+    if "基本面恶化" in risk_flags:
+        risk_penalty += 5.0
+    if "题材退潮" in risk_flags:
+        risk_penalty += 4.0
+
+    # 程序侧硬约束（独立于 LLM，双重保险）
     if ret20 is not None:
         r = float(ret20)
-        if r > 10:
-            cap = min(cap, rule - 10, 70.0)
-        elif r > 8:
-            cap = min(cap, rule - 5)
+        if r > 7:
+            risk_penalty = max(risk_penalty, 6.0)
+            if "追高风险(涨幅过高)" not in risk_flags:
+                risk_flags.append("追高风险(涨幅过高)")
         elif r > 5:
-            cap = min(cap, rule)
+            risk_penalty = max(risk_penalty, 3.0)
+    if high_pct is not None and float(high_pct) > 92:
+        risk_penalty = max(risk_penalty, 4.0)
+        if "接近阶段高点" not in risk_flags:
+            risk_flags.append("接近阶段高点")
+    if ret20 is not None and float(ret20) > 3 and vol_ratio is not None and float(vol_ratio) < 0.8:
+        risk_penalty = max(risk_penalty, 4.0)
+        if "量价背离(缩量上涨)" not in risk_flags:
+            risk_flags.append("量价背离(缩量上涨)")
 
-    score = out.get("composite_score")
-    if score is not None:
-        out["composite_score"] = round(max(0.0, min(100.0, min(float(score), cap))), 1)
-
+    # 推荐语降级（基于风险）
     rec = str(out.get("recommendation") or "")
-    if ret20 is not None and float(ret20) > 8 and rec in ("强烈关注", "关注"):
-        out["recommendation"] = "观望"
-    if ret20 is not None and float(ret20) > 10 and rec in ("强烈关注", "关注", "观望"):
+    if risk_penalty >= 8 and rec in ("强烈关注", "关注", "观望"):
         out["recommendation"] = "谨慎"
-    if gap is not None and float(gap) > 3 and rec in ("强烈关注", "关注"):
+    elif risk_penalty >= 4 and rec in ("强烈关注", "关注"):
         out["recommendation"] = "观望"
+    if ret20 is not None and float(ret20) > 7 and rec in ("强烈关注", "关注", "观望"):
+        out["recommendation"] = "谨慎"
 
+    # 计算最终分
+    final_score = rule + confidence_adj - risk_penalty
+    out["adjusted_score"] = round(max(0.0, min(100.0, final_score)), 1)
+    out["risk_penalty"] = risk_penalty
+    out["confidence_adjustment"] = confidence_adj
+    out["risk_flags"] = risk_flags
     return out
 
 
@@ -440,31 +502,33 @@ def _brief_review_one(
     as_of: str | None,
     model: str | None,
 ) -> dict[str, Any]:
-    """单票简评（最稳，避免批量 JSON 撑爆输出上限）。"""
+    """单票简评 — LLM 作为风险审核员（不输出 composite_score）。"""
     row = _compact_pick_row(p)
-    prompt = f"""A股量化简评。数据截止 {as_of or '最新'}。
+    prompt = f"""A股风险审核。数据截止 {as_of or '最新'}。
 {_LLM_BRIEF_RULES}
 标的：{json.dumps(row, ensure_ascii=False)}
-输出 JSON 单对象：ts_code, trend_one_liner(≤35字), composite_score(0-100), recommendation, vs_rule_engine(≤20字)。"""
+输出 JSON 单对象：ts_code, trend_one_liner(≤60字), risk_flags, confidence_adjustment, recommendation, vs_rule_engine(≤30字)。"""
     raw = generate_json_with_gemini(
         prompt=prompt,
         response_schema=None,
         temperature=0.2,
         max_output_tokens=2048,
-        model=model or GEMINI_MODEL,
+        model=model or _LLM_MODEL,
     )
     usage = pop_usage(raw)
-    br = _clamp_brief_review(p, raw if raw.get("ts_code") else raw)
-    code = str(p.get("ts_code"))
+    br = _apply_risk_penalty(p, raw if raw.get("ts_code") else raw)
     out = {**p, "rule_composite_score": p.get("composite_score")}
-    llm_score = br.get("composite_score")
-    if llm_score is not None:
-        out["llm_composite_score"] = float(llm_score)
-        out["composite_score"] = float(llm_score)
+    # LLM 不再输出 composite_score，保存风险信息
+    out["llm_composite_score"] = None  # 向后兼容：nullable
+    out["composite_score"] = p.get("composite_score")  # 保留规则分
+    out["adjusted_score"] = br.get("adjusted_score")
     out["llm_brief"] = {
         "trend": br.get("trend_one_liner"),
         "recommendation": br.get("recommendation"),
         "vs_rule_engine": br.get("vs_rule_engine"),
+        "risk_flags": br.get("risk_flags"),
+        "risk_penalty": br.get("risk_penalty"),
+        "confidence_adjustment": br.get("confidence_adjustment"),
     }
     if usage:
         out["_usage"] = usage
@@ -472,9 +536,9 @@ def _brief_review_one(
 
 
 def _scan_brief_max_output(n: int) -> int:
-    """批量简评输出 token 上限（避免 finishReason=MAX_TOKENS）。"""
-    cap = int(__import__("os").getenv("GEMINI_SCAN_BRIEF_MAX_OUTPUT", "16384"))
-    per_stock = int(__import__("os").getenv("GEMINI_SCAN_BRIEF_PER_STOCK_OUT", "280"))
+    """批量简评输出 token 上限（避免 finish_reason=length）。"""
+    cap = int(__import__("os").getenv("LLM_SCAN_BRIEF_MAX_OUTPUT", "16384"))
+    per_stock = int(__import__("os").getenv("LLM_SCAN_BRIEF_PER_STOCK_OUT", "280"))
     return min(cap, max(2048, 400 + max(1, n) * per_stock))
 
 
@@ -485,11 +549,11 @@ def _brief_review_batch(
     model: str | None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     rows = [_compact_pick_row(p) for p in picks]
-    prompt = f"""你是 A 股量化选股分析师。以下为规则引擎筛出的 {len(rows)} 只（数据截止 {as_of or '最新'}）。
+    prompt = f"""你是 A 股风险审核员。以下为规则引擎筛出的 {len(rows)} 只（数据截止 {as_of or '最新'}）。
 {_LLM_BRIEF_RULES}
 
-请对**每一只**基于 JSON 中的 concepts、news_48h、close、ret_20d、high_60d_pct、close_vs_buy_gap_pct、KDJ、signals 写 trend_one_liner（**一句话**，≤40字），并给出 composite_score（0-100）与 recommendation。
-vs_rule_engine 每项 **≤25字**。勿漏 ts_code。
+请对**每一只**基于 JSON 中的 concepts、news_48h、close、ret_20d、high_60d_pct、vol_ratio20、KDJ、signals 写 trend_one_liner（**一句话**，≤60字），并给出 risk_flags、confidence_adjustment、recommendation。
+vs_rule_engine 每项 **≤30字**。勿漏 ts_code。
 
 【候选列表 JSON】
 {json.dumps(rows, ensure_ascii=False, indent=2)}
@@ -502,7 +566,7 @@ vs_rule_engine 每项 **≤25字**。勿漏 ts_code。
         response_schema=_SCAN_BRIEF_SCHEMA,
         temperature=0.25,
         max_output_tokens=max_out,
-        model=model or GEMINI_MODEL,
+        model=model or _LLM_MODEL,
     )
     usage = pop_usage(raw)
     by_code = {str(r.get("ts_code")): r for r in raw.get("reviews") or []}
@@ -510,17 +574,19 @@ vs_rule_engine 每项 **≤25字**。勿漏 ts_code。
     merged: list[dict[str, Any]] = []
     for p in picks:
         code = str(p.get("ts_code"))
-        br = _clamp_brief_review(p, by_code.get(code) or {})
-        llm_score = br.get("composite_score")
+        br = _apply_risk_penalty(p, by_code.get(code) or {})
         out = {**p}
         out["rule_composite_score"] = p.get("composite_score")
-        if llm_score is not None:
-            out["llm_composite_score"] = float(llm_score)
-            out["composite_score"] = float(llm_score)
+        out["llm_composite_score"] = None  # LLM 不再输出 composite_score
+        out["composite_score"] = p.get("composite_score")  # 保留规则分
+        out["adjusted_score"] = br.get("adjusted_score")
         out["llm_brief"] = {
             "trend": br.get("trend_one_liner"),
             "recommendation": br.get("recommendation"),
             "vs_rule_engine": br.get("vs_rule_engine"),
+            "risk_flags": br.get("risk_flags"),
+            "risk_penalty": br.get("risk_penalty"),
+            "confidence_adjustment": br.get("confidence_adjustment"),
         }
         merged.append(out)
     return merged, usage
@@ -547,11 +613,11 @@ def brief_review_scan_picks(
     batch_size: int | None = None,
     per_stock: bool | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """扫描候选：Gemini 简评。默认逐只调用（稳）；``per_stock=False`` 时走批量。"""
+    """扫描候选：LLM 简评。默认逐只调用（稳）；``per_stock=False`` 时走批量。"""
     if not picks:
         return [], None
     if not gemini_available():
-        raise GeminiError("未配置 GEMINI_API_KEY")
+        raise GeminiError("未配置 DEEPSEEK_API_KEY")
 
     use_per_stock = per_stock
     if use_per_stock is None:

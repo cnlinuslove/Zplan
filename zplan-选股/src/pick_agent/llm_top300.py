@@ -94,6 +94,7 @@ def _deepen_one_pick(
         "kdj_d": tech.features.get("kdj_d"),
         "ret_20d": tech.features.get("ret_20d"),
         "high_60d_pct": tech.features.get("high_60d_pct"),
+        "vol_ratio20": tech.features.get("vol_ratio20"),
         "industry_relative_note": ind_note,
         "news_mentions_48h": news_detail.get("hits", 0),
         "volume_ratio_vs_prior": (ctx.get("intraday") or {}).get("volume_ratio_vs_prior"),
@@ -201,7 +202,7 @@ def run_llm_top_from_rule_scores(
             batch_size=batch_size,
         )
     elif use_llm and not gemini_available():
-        logger.warning("GEMINI_API_KEY 未配置，仅输出深度规则分")
+        logger.warning("DEEPSEEK_API_KEY 未配置，仅输出深度规则分")
 
     if strat.resort_after_llm:
         picks = sort_picks_for_rank(picks, strat)
@@ -225,7 +226,6 @@ def run_llm_top_from_rule_scores(
     if persist:
         run_id = save_scan_run(
             result,
-            run_kind="llm_top300",
             params={
                 "top_n": top_n,
                 "batch_size": batch_size,

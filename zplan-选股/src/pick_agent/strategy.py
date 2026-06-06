@@ -15,12 +15,16 @@ DEFAULT_STRATEGY_PATH = _PKG_ROOT / "config" / "strategy.yaml"
 class PickStrategy:
     version: str = "1"
     rule_version: str = "pick-default"
+    market: str = "a"          # 'a' = A 股，'hk' = 港股
     min_bars: int = 60
     min_score: float = 55.0
     min_turnover_rate: float = 0.5
     min_volume: float = 0.0
     exclude_st: bool = True
     exclude_bj: bool = False
+    # 港股专属：排除仙股
+    exclude_penny: bool = False
+    penny_threshold: float = 0.5
     prefilter_top_multiplier: int = 5
     weights: dict[str, float] = field(
         default_factory=lambda: {
@@ -36,14 +40,19 @@ class PickStrategy:
     min_panel_rows: int = 300
     max_stale_days: int = 3
     llm_enabled: bool = True
-    llm_model: str = "gemini-2.5-pro"
+    llm_model: str = "deepseek-chat"
     llm_scan_brief: bool = True
     llm_top_n: int = 300
     llm_batch_size: int = 10
     ranking_mode: str = "llm_primary"
     ranking_llm_weight: float = 0.75
     ranking_rule_weight: float = 0.25
+    llm_risk_penalty: float = 8.0
     resort_after_llm: bool = True
+    # 行业分散
+    max_per_industry: int = 0
+    final_max_per_industry: int = 0
+    min_industries: int = 0
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -60,16 +69,20 @@ def load_strategy(path: Path | str | None = None) -> PickStrategy:
     llm = data.get("llm") or {}
     rule_init = data.get("rule_init") or {}
     ranking = data.get("ranking") or {}
+    diversification = data.get("diversification") or {}
 
     return PickStrategy(
         version=str(data.get("version", "1")),
         rule_version=str(data.get("rule_version", "pick-default")),
+        market=str(data.get("market", "a")),
         min_bars=int(scan.get("min_bars", 60)),
         min_score=float(scan.get("min_score", 55.0)),
         min_turnover_rate=float(scan.get("min_turnover_rate", 0.5)),
         min_volume=float(scan.get("min_volume", 0)),
         exclude_st=bool(scan.get("exclude_st", True)),
         exclude_bj=bool(scan.get("exclude_bj", False)),
+        exclude_penny=bool(scan.get("exclude_penny", False)),
+        penny_threshold=float(scan.get("penny_threshold", 0.5)),
         prefilter_top_multiplier=int(scan.get("prefilter_top_multiplier", 5)),
         weights={
             "technical": float(w.get("technical", 0.65)),
@@ -83,7 +96,7 @@ def load_strategy(path: Path | str | None = None) -> PickStrategy:
         min_panel_rows=int(mh.get("min_panel_rows", 300)),
         max_stale_days=int(mh.get("max_stale_days", 3)),
         llm_enabled=bool(llm.get("enabled", True)),
-        llm_model=str(llm.get("model", "gemini-2.5-pro")),
+        llm_model=str(llm.get("model", "deepseek-chat")),
         llm_scan_brief=bool(llm.get("scan_brief", True)),
         llm_top_n=int(rule_init.get("llm_top_n", 300)),
         llm_batch_size=int(rule_init.get("llm_batch_size", 15)),
@@ -91,23 +104,37 @@ def load_strategy(path: Path | str | None = None) -> PickStrategy:
         ranking_llm_weight=float(ranking.get("llm_weight", 0.75)),
         ranking_rule_weight=float(ranking.get("rule_weight", 0.25)),
         resort_after_llm=bool(ranking.get("resort_after_llm", True)),
+        llm_risk_penalty=float(ranking.get("llm_risk_penalty", 8.0)),
+        max_per_industry=int(diversification.get("max_per_industry", 0)),
+        final_max_per_industry=int(diversification.get("final_max_per_industry", 0)),
+        min_industries=int(diversification.get("min_industries", 0)),
         raw=data,
     )
 
 
 def final_rank_score(p: dict[str, Any], strategy: PickStrategy) -> float:
-    """排序用最终分：默认 LLM 为主，无 LLM 时回退规则分。"""
+    """排序用最终分。``rule_filtered`` 模式：规则分为主、LLM 风险扣分微调。"""
     rule = float(p.get("rule_composite_score") or p.get("composite_score") or 0)
     llm = p.get("llm_composite_score")
-    mode = (strategy.ranking_mode or "llm_primary").lower()
+    adjusted = p.get("adjusted_score")
+    mode = (strategy.ranking_mode or "rule_filtered").lower()
+
+    if mode == "rule_filtered":
+        # 规则分为主，LLM 风险扣分后调整
+        if adjusted is not None:
+            return float(adjusted)
+        return rule
+
     if mode == "rule_primary":
         return rule
+
     if mode == "blend":
         lw = strategy.ranking_llm_weight
         rw = strategy.ranking_rule_weight
         llm_v = float(llm) if llm is not None else rule
         return lw * llm_v + rw * rule
-    # llm_primary
+
+    # llm_primary（向后兼容）
     if llm is not None:
         return float(llm)
     return rule

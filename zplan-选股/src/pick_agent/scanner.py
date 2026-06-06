@@ -32,10 +32,14 @@ from pick_agent.technical import analyze_technical
 logger = logging.getLogger(__name__)
 
 
-def _load_stock_meta() -> pd.DataFrame:
+def _load_stock_meta(market: str = "a") -> pd.DataFrame:
     init_db()
     with SessionLocal() as session:
-        rows = session.execute(select(StockList.ts_code, StockList.name, StockList.industry)).all()
+        rows = session.execute(
+            select(StockList.ts_code, StockList.name, StockList.industry).where(
+                StockList.market == market
+            )
+        ).all()
     return pd.DataFrame(rows, columns=["ts_code", "name", "industry"])
 
 
@@ -48,15 +52,21 @@ def _prefilter_panel(panel: pd.DataFrame, meta: pd.DataFrame, strategy: PickStra
     if strategy.min_volume > 0 and "volume" in df.columns:
         vol = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
         df = df[vol >= strategy.min_volume]
-    if strategy.exclude_st and "name" in df.columns:
-        df = df[~df["name"].fillna("").str.contains("ST", case=False, na=False)]
-    if strategy.exclude_bj:
-        df = df[~df["ts_code"].astype(str).str.startswith("92")]
+    # A 股专属过滤
+    if strategy.market == "a":
+        if strategy.exclude_st and "name" in df.columns:
+            df = df[~df["name"].fillna("").str.contains("ST", case=False, na=False)]
+        if strategy.exclude_bj:
+            df = df[~df["ts_code"].astype(str).str.startswith("92")]
+    # 港股专属过滤：仙股
+    if strategy.market == "hk" and strategy.exclude_penny:
+        if "close" in df.columns:
+            df = df[df["close"] >= strategy.penny_threshold]
     return df
 
 
 def _apply_snapshot_filters(df: pd.DataFrame, strategy: PickStrategy, as_of) -> pd.DataFrame:
-    snap = get_snapshot(as_of)
+    snap = get_snapshot(as_of, market=strategy.market)
     if snap.empty:
         return df
     merged = df.merge(snap, on="ts_code", how="left", suffixes=("", "_snap"))
@@ -96,6 +106,8 @@ def scan_universe(
     min_bars = min_bars if min_bars is not None else strat.min_bars
     min_score = min_score if min_score is not None else strat.min_score
 
+    market = strat.market
+
     if not skip_health_check:
         health = check_market_health(
             min_panel_rows=strat.min_panel_rows,
@@ -109,15 +121,15 @@ def scan_universe(
             max_stale_days=999,
         )
 
-    trade_date = latest_trade_date()
+    trade_date = latest_trade_date(market=market)
     if trade_date is None:
-        return {"ok": False, "picks": [], "message": "无日线数据，请先运行 zplan-股价"}
+        return {"ok": False, "picks": [], "message": "无日线数据，请先运行 zplan-股价（港股需先拉取数据）"}
 
-    panel = get_panel(as_of or trade_date, fields=["close", "pct_chg", "turnover_rate", "volume"])
+    panel = get_panel(as_of or trade_date, fields=["close", "pct_chg", "turnover_rate", "volume"], market=market)
     if panel.empty:
         return {"ok": False, "picks": [], "message": "截面为空"}
 
-    meta = _load_stock_meta()
+    meta = _load_stock_meta(market=market)
     filtered = _prefilter_panel(panel, meta, strat)
     filtered = _apply_snapshot_filters(filtered, strat, trade_date)
     if filtered.empty:
@@ -132,11 +144,11 @@ def scan_universe(
         }
 
     codes = filtered["ts_code"].tolist()
-    feat_df = get_features_panel(trade_date)
+    feat_df = get_features_panel(trade_date, market=market)
     if not feat_df.empty:
         feat_df = feat_df[feat_df["ts_code"].isin(codes)]
     if feat_df.empty or len(feat_df) < max(50, len(codes) // 4):
-        history = get_history_window(end=trade_date, calendar_days=150, ts_codes=codes)
+        history = get_history_window(end=trade_date, calendar_days=150, ts_codes=codes, market=market)
         feat_df = scan_universe_features(history, min_bars=min_bars)
     feat_df = _apply_feature_filters(feat_df, strat)
     if feat_df.empty:
@@ -180,7 +192,7 @@ def scan_universe(
             continue
 
         ctx = get_pick_context(code)
-        fin_df = get_financials(code, limit=8)
+        fin_df = get_financials(code, limit=8, market=market)
         fin_rows = fin_df.to_dict("records") if not fin_df.empty else []
         fin_sc, _ = financial_score_from_rows(fin_rows)
         news_sc, news_detail = news_score(ctx)
@@ -220,6 +232,7 @@ def scan_universe(
                 "kdj_k": tech.features.get("kdj_k"),
                 "kdj_d": tech.features.get("kdj_d"),
                 "ret_20d": tech.features.get("ret_20d"),
+                "vol_ratio20": tech.features.get("vol_ratio20"),
                 "ma5_cross_ma20": tech.features.get("ma5_cross_ma20"),
                 "high_60d_pct": tech.features.get("high_60d_pct"),
                 "vol_breakout": tech.features.get("vol_breakout"),

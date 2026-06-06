@@ -1,5 +1,5 @@
 version: "1"
-rule_version: "pick-2026-05-theme"
+rule_version: "pick-2026-06-anti-chase"
 
 scan:
   min_bars: 60
@@ -20,7 +20,20 @@ filters:
   max_pe_ttm: null
   min_total_mv: null
   max_total_mv: null
-  max_ret_20d: 10.0   # 超过则 init-rule/扫描预筛直接剔除；5~10% 规则降分
+  max_ret_20d: 5.0    # ML r=-0.56：>5% 反转概率陡升，预筛直接剔除
+  max_high_60d_pct: 0.95  # 接近 60 日高点 >95% 剔除（追高空间有限）
+
+# 行业分散：防止热门行业垄断 Top 排名
+diversification:
+  max_per_industry: 8       # Top300 同一行业最多 N 只
+  final_max_per_industry: 3  # 最终展示同一行业最多 N 只
+  min_industries: 5          # Top 至少覆盖 N 个行业
+
+# 风险过滤：程序侧硬约束
+risk_filters:
+  max_kdj_overbought: 80       # KDJ 的 K>80 扣分
+  min_vol_ratio: 0.7           # 缩量上涨→诱多扣分
+  max_high_60d_pct: 95        # 60日高位扣分
 
 signals:
   require_any: []
@@ -36,16 +49,17 @@ market_health:
 
 llm:
   enabled: true
-  model: gemini-2.5-pro
+  model: deepseek-chat
   scan_brief: true
 
 rule_init:
   llm_top_n: 300
   llm_batch_size: 10   # 每批简评只数
 
-# 最终排序：LLM 为主，规则为辅（回测 llm-eval 可校正权重）
+# 最终排序：规则分为主，LLM 风险扣分微调（回测验证 LLM 分无预测能力）
 ranking:
-  mode: llm_primary       # llm_primary | blend | rule_primary
-  llm_weight: 0.75        # mode=blend 时生效
+  mode: rule_filtered      # rule_filtered | rule_primary | blend | llm_primary
+  llm_weight: 0.75         # mode=blend 时生效
   rule_weight: 0.25
-  resort_after_llm: true  # LLM 简评后按最终分重排再写入 rank
+  llm_risk_penalty: 8.0    # LLM 发现严重风险时最大扣分幅度
+  resort_after_llm: true   # LLM 简评后按最终分重排再写入 rank

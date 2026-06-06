@@ -282,9 +282,15 @@ def suggested_price_levels(bars: pd.DataFrame) -> dict[str, float | None]:
     ma20 = enriched["ma20"].iloc[-1] if "ma20" in enriched.columns else None
     atr = enriched["atr14"].iloc[-1] if "atr14" in enriched.columns else None
 
-    buy = support
+    # 主买入价：市价附近，确保日内可达（回测验证 97.7% 旧公式买不到）
+    buy = close * 0.98
+
+    # 深度回调买入价（参考）：支撑 / MA20×0.96，底线距市价 ≤5%
+    dip_buy = support
     if ma20 is not None and not pd.isna(ma20):
-        buy = min(buy, float(ma20) * 0.98)
+        dip_buy = min(dip_buy, float(ma20) * 0.96)
+    dip_buy = max(dip_buy, close * 0.95)
+
     target = resistance
     if atr is not None and not pd.isna(atr):
         target = max(target, close + 2 * float(atr))
@@ -295,6 +301,7 @@ def suggested_price_levels(bars: pd.DataFrame) -> dict[str, float | None]:
         "support_20d": round(support, 4),
         "resistance_20d": round(resistance, 4),
         "suggested_buy": round(buy, 4),
+        "dip_buy": round(dip_buy, 4),
         "target_price": round(target, 4),
         "stop_loss": round(stop, 4) if stop else None,
     }

@@ -109,20 +109,24 @@ def composite_score(
     return round(max(0.0, min(100.0, composite)), 1)
 
 
-def momentum_penalty(ret_20d: float | None, *, max_ret_20d: float | None = 12.0) -> float:
-    """20 日涨幅过热扣分（用于技术分 / 排序，非 forward 预测）。"""
+def momentum_penalty(ret_20d: float | None, *, max_ret_20d: float | None = 5.0) -> float:
+    """20 日涨幅过热扣分（用于技术分 / 排序，非 forward 预测）。
+
+    ML 实验证实：ret_late（近期涨幅）是反转信号的最强单一特征（r=-0.56 与 forward_return）。
+    阈值下调至 5% 与 strategy.yaml 预筛一致。
+    """
     if ret_20d is None:
         return 0.0
     r = float(ret_20d)
-    cap = float(max_ret_20d) if max_ret_20d is not None else 12.0
+    cap = float(max_ret_20d) if max_ret_20d is not None else 5.0
     if r > cap:
-        return 25.0
-    if r > 10:
-        return 15.0 + (r - 10) * 1.5
-    if r > 8:
-        return 8.0 + (r - 8) * 2.0
+        return 30.0
+    if r > 7:
+        return 25.0 + (r - 7) * 3.0
     if r > 5:
-        return (r - 5) * 2.0
+        return 15.0 + (r - 5) * 4.0
+    if r > 3:
+        return (r - 3) * 3.0
     return 0.0
 
 
@@ -130,22 +134,29 @@ def apply_momentum_cap(
     score: float,
     ret_20d: float | None,
     *,
-    max_ret_20d: float | None = 12.0,
+    max_ret_20d: float | None = 5.0,
+    vol_ratio20: float | None = None,
 ) -> float:
-    """过热时压低综合/技术分上限。"""
+    """过热时压低综合/技术分上限；缩量上涨额外惩罚。"""
     s = float(score)
     if ret_20d is None:
         return round(max(0.0, min(100.0, s)), 1)
     r = float(ret_20d)
-    cap = float(max_ret_20d) if max_ret_20d is not None else 12.0
-    if r > cap:
-        s = min(s, 62.0)
-    elif r > 10:
-        s = min(s, 72.0)
-    elif r > 8:
-        s = min(s, 78.0)
+    cap_val = float(max_ret_20d) if max_ret_20d is not None else 5.0
+    if r > cap_val:
+        s = min(s, 52.0)
+    elif r > 7:
+        s = min(s, 58.0)
     elif r > 5:
-        s = min(s, 85.0)
+        s = min(s, 65.0)
+    elif r > 3:
+        s = min(s, 72.0)
+
+    # 缩量上涨：ML 证实 body_last（K 线实体）+ vol_ratio（量比）是前五大特征
+    # 涨了但没量 → 诱多概率更高
+    if r > 2 and vol_ratio20 is not None and float(vol_ratio20) < 0.8:
+        s = max(45.0, s - 8.0)
+
     return round(max(0.0, min(100.0, s)), 1)
 
 
@@ -158,12 +169,15 @@ def verdict_from_score(score: float) -> str:
 
 
 def quick_technical_score(features: dict[str, float | None]) -> float:
-    """向量化预筛用的轻量技术分（与 analyze_technical 共用 P0 快照字段）。"""
+    """向量化预筛用的轻量技术分（与 analyze_technical 共用 P0 快照字段）。
+
+    2026-06 改进：减弱追涨奖励，奖励均值回归，惩罚缩量上涨。
+    """
     score = 50.0
     ma5, ma20, ma60 = features.get("ma5"), features.get("ma20"), features.get("ma60")
     if ma5 and ma20 and ma60:
         if ma5 > ma20 > ma60:
-            score += 15
+            score += 8           # was +15，减弱追涨偏好
         elif ma5 < ma20 < ma60:
             score -= 15
     if feature_flag(features, "ma5_cross_ma20"):
@@ -177,19 +191,40 @@ def quick_technical_score(features: dict[str, float | None]) -> float:
     ret20 = features.get("ret_20d")
     if ret20 is not None:
         score -= momentum_penalty(ret20)
-        if ret20 < -15:
-            score -= 6
+        if ret20 < -12:
+            score += 5            # 深度超卖→均值回归机会（ML r=-0.56）
+        elif ret20 < -7:
+            score += 3            # 中度回调→低吸机会
         elif -3 <= ret20 <= 3:
-            score += 3
+            score += 4            # 横盘整理/低吸区
+        elif ret20 > 12:
+            score -= 6            # 过高涨幅惩罚
+        elif ret20 > 8:
+            score -= 4
+        elif ret20 > 5:
+            score -= 2
     hist = features.get("macd_hist")
     if hist is not None and hist > 0:
         score += 4
     if feature_flag(features, "vol_breakout") and (features.get("ret_5d") or 0) > 0:
         score += 5
+    # 60 日高位 → 追高风险，扣分（was +4 奖励）
     h60 = features.get("high_60d_pct")
-    if h60 is not None and h60 >= 98:
-        score += 4
+    if h60 is not None:
+        if h60 >= 98:
+            score -= 8          # 极端高位
+        elif h60 >= 95:
+            score -= 5          # 追高风险
     cvm = features.get("close_vs_ma20")
-    if cvm is not None and -3 <= cvm <= 2:
+    if cvm is not None and -5 <= cvm <= 2:
         score += 2
+    # 缩量上涨 = 诱多（ML 验证 vol_ratio 是前五大特征）
+    vol_r = features.get("vol_ratio20")
+    if ret20 is not None and vol_r is not None:
+        if ret20 > 3 and vol_r < 0.8:
+            score -= 8           # 涨了但缩量→诱多概率高
+        elif ret20 > 0 and vol_r < 0.6:
+            score -= 5           # 微涨但极度缩量→动能衰竭
+        elif ret20 < -7 and vol_r > 1.5:
+            score += 3           # 下跌放量→恐慌出清，均值回归机会
     return max(0.0, min(100.0, score))
