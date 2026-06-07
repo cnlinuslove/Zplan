@@ -1,0 +1,179 @@
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { Table, Tag, Select, Card, Space, Typography, Input } from 'antd'
+import { TrophyOutlined, SearchOutlined } from '@ant-design/icons'
+import api from '../api/client'
+
+const { Title } = Typography
+
+interface PickEntry {
+  id: number
+  ts_code: string
+  name: string
+  rank: number
+  close_price: number
+  rule_composite_score: number
+  llm_composite_score: number | null
+  final_composite_score: number
+  recommendation: string
+  verdict: string
+  predicted_buy_price: number
+  predicted_target_price: number
+}
+
+export default function PicksPage() {
+  const navigate = useNavigate()
+  const [topN, setTopN] = useState(30)
+  const [search, setSearch] = useState('')
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['picks', 'latest', topN],
+    queryFn: () => api.get('/picks/latest', { params: { run_kind: 'scan', top_n: topN } }),
+    refetchInterval: 60_000,
+  })
+
+  const entries: PickEntry[] = data?.data?.entries || []
+  const filtered = search
+    ? entries.filter(
+        (e) =>
+          e.ts_code.includes(search) ||
+          (e.name && e.name.includes(search)),
+      )
+    : entries
+
+  const columns = [
+    {
+      title: '#',
+      dataIndex: 'rank',
+      key: 'rank',
+      width: 50,
+      render: (r: number) => (
+        <span style={{ fontWeight: r <= 3 ? 700 : 400, color: r <= 3 ? '#faad14' : undefined }}>
+          {r <= 3 && <TrophyOutlined style={{ marginRight: 4 }} />}
+          {r}
+        </span>
+      ),
+    },
+    { title: '代码', dataIndex: 'ts_code', key: 'ts_code', width: 100 },
+    { title: '名称', dataIndex: 'name', key: 'name', width: 100 },
+    {
+      title: '收盘价',
+      dataIndex: 'close_price',
+      key: 'close_price',
+      width: 80,
+      render: (v: number) => v?.toFixed(2),
+    },
+    {
+      title: '规则分',
+      dataIndex: 'rule_composite_score',
+      key: 'rule_composite_score',
+      width: 80,
+      render: (v: number) => v?.toFixed(1),
+    },
+    {
+      title: 'LLM分',
+      dataIndex: 'llm_composite_score',
+      key: 'llm_composite_score',
+      width: 80,
+      render: (v: number | null) => (v != null ? v.toFixed(1) : '-'),
+    },
+    {
+      title: '最终分',
+      dataIndex: 'final_composite_score',
+      key: 'final_composite_score',
+      width: 80,
+      render: (v: number) => <strong>{v?.toFixed(1)}</strong>,
+    },
+    {
+      title: '建议',
+      dataIndex: 'recommendation',
+      key: 'recommendation',
+      width: 90,
+      render: (v: string) => {
+        const colors: Record<string, string> = {
+          '强烈关注': 'red',
+          '关注': 'orange',
+          '观望': 'default',
+          '谨慎': 'blue',
+          '回避': 'default',
+        }
+        return <Tag color={colors[v] || 'default'}>{v || '-'}</Tag>
+      },
+    },
+    {
+      title: '判定',
+      dataIndex: 'verdict',
+      key: 'verdict',
+      width: 70,
+    },
+    {
+      title: '建议买入',
+      dataIndex: 'predicted_buy_price',
+      key: 'predicted_buy_price',
+      width: 90,
+      render: (v: number) => v?.toFixed(2),
+    },
+    {
+      title: '目标价',
+      dataIndex: 'predicted_target_price',
+      key: 'predicted_target_price',
+      width: 90,
+      render: (v: number) => v?.toFixed(2),
+    },
+  ]
+
+  return (
+    <div style={{ padding: 24, height: '100vh', overflow: 'auto' }}>
+      <Card style={{ marginBottom: 16 }}>
+        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Space>
+            <Title level={4} style={{ margin: 0 }}>
+              🏆 选股榜单
+            </Title>
+            {data?.data && (
+              <Tag color="blue">
+                {data.data.trade_date} · {data.data.rule_version}
+              </Tag>
+            )}
+          </Space>
+          <Space>
+            <Select
+              value={topN}
+              onChange={setTopN}
+              options={[
+                { value: 10, label: 'Top 10' },
+                { value: 30, label: 'Top 30' },
+                { value: 50, label: 'Top 50' },
+                { value: 100, label: 'Top 100' },
+              ]}
+              size="small"
+            />
+            <Input
+              prefix={<SearchOutlined />}
+              placeholder="搜索代码/名称"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              size="small"
+              style={{ width: 160 }}
+            />
+          </Space>
+        </Space>
+      </Card>
+
+      <Table
+        columns={columns}
+        dataSource={filtered}
+        rowKey="id"
+        loading={isLoading}
+        size="small"
+        scroll={{ x: 1100 }}
+        pagination={false}
+        onRow={(record) => ({
+          onClick: () => navigate(`/picks/${record.id}`),
+          style: { cursor: 'pointer' },
+        })}
+      />
+    </div>
+  )
+}

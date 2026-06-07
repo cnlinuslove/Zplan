@@ -122,55 +122,54 @@ def plot_stock_chart(
     # ── 构建技术解读文本 ──
     interpretation = _build_interpretation(recent, price_levels, signals, risk_flags)
 
-    # 2. 面板布局
-    has_gallery = bool(similar_patterns and similar_patterns.get("matches"))
-
-    if has_gallery:
-        n_matches = len(similar_patterns["matches"])
-        fig = plt.figure(figsize=(22, 22 + n_matches * 1.0))
-        gs = GridSpec(5, 1, figure=fig, height_ratios=[6, 1.8, 0.12, 2.5, 2.2], hspace=0.28)
-        ax_main = fig.add_subplot(gs[0])
-        ax_vol = fig.add_subplot(gs[1], sharex=ax_main)
-        ax_gap = fig.add_subplot(gs[2])
-        ax_gap.axis("off")
-        ax_macd = fig.add_subplot(gs[4], sharex=ax_main)
-        gs_gallery = GridSpecFromSubplotSpec(1, n_matches, subplot_spec=gs[3], wspace=0.12)
-        gallery_axes = [fig.add_subplot(gs_gallery[i]) for i in range(n_matches)]
-    else:
-        fig = plt.figure(figsize=(22, 15))
-        gs = GridSpec(4, 1, figure=fig, height_ratios=[6, 1.8, 0.06, 2.2], hspace=0.22)
-        ax_main = fig.add_subplot(gs[0])
-        ax_vol = fig.add_subplot(gs[1], sharex=ax_main)
-        ax_gap = fig.add_subplot(gs[2])
-        ax_gap.axis("off")
-        ax_macd = fig.add_subplot(gs[3], sharex=ax_main)
-        gallery_axes = []
-
-    # 3. 绘制各面板
-    _draw_main_chart(ax_main, recent, price_levels, signals, code, name, risk_flags, title, interpretation)
-    _draw_volume(ax_vol, recent, interpretation)
-    _draw_macd(ax_macd, recent, interpretation)
-
-    # 4. 相似形态画廊
-    if has_gallery:
-        _draw_similar_gallery(fig, gallery_axes, similar_patterns)
-
-    # 5. 全局微调
-    _stamp_footer(fig, code, recent)
-
-    # 6. 保存
+    # 2. 保存目录
     if output_dir is None:
         from zplan_shared.config import ZPLAN_ROOT
         output_dir = os.path.join(ZPLAN_ROOT, "charts")
     os.makedirs(output_dir, exist_ok=True)
     as_of_str = str(recent.index[-1]).replace("-", "")[:8]
-    fname = f"{code}_{as_of_str}.png"
-    output_path = os.path.join(output_dir, fname)
+    has_gallery = bool(similar_patterns and similar_patterns.get("matches"))
 
-    fig.savefig(output_path, dpi=FIG_DPI, bbox_inches="tight", facecolor=CLR_BG, edgecolor="none")
-    plt.close(fig)
-    logger.info("图表已生成: %s", output_path)
-    return output_path
+    # ── 图 1: K线 + 均线 + 量能 ──
+    fig1 = plt.figure(figsize=(22, 12))
+    gs1 = GridSpec(2, 1, figure=fig1, height_ratios=[5, 1.5], hspace=0.15)
+    ax_main = fig1.add_subplot(gs1[0])
+    ax_vol = fig1.add_subplot(gs1[1], sharex=ax_main)
+    _draw_main_chart(ax_main, recent, price_levels, signals, code, name, risk_flags, title, interpretation)
+    _draw_volume(ax_vol, recent, interpretation)
+    _stamp_footer(fig1, code, recent)
+    fname1 = f"{code}_{as_of_str}_kline.png"
+    path1 = os.path.join(output_dir, fname1)
+    fig1.savefig(path1, dpi=FIG_DPI, bbox_inches="tight", facecolor=CLR_BG, edgecolor="none")
+    plt.close(fig1)
+    logger.info("K线图已生成: %s", path1)
+
+    # ── 图 2: MACD + 相似形态画廊 ──
+    if has_gallery:
+        n_matches = len(similar_patterns["matches"])
+        fig2 = plt.figure(figsize=(22, 4 + n_matches * 2.2))
+        gs2 = GridSpec(2, 1, figure=fig2, height_ratios=[3, 2.5 + n_matches * 0.5], hspace=0.3)
+        ax_macd = fig2.add_subplot(gs2[0])
+        ax_gallery_row = fig2.add_subplot(gs2[1])
+        ax_gallery_row.axis("off")
+        gs_gallery = GridSpecFromSubplotSpec(1, n_matches, subplot_spec=gs2[1], wspace=0.12)
+        gallery_axes = [fig2.add_subplot(gs_gallery[i]) for i in range(n_matches)]
+    else:
+        fig2 = plt.figure(figsize=(22, 7))
+        ax_macd = fig2.add_subplot()
+        gallery_axes = []
+
+    _draw_macd(ax_macd, recent, interpretation)
+    if has_gallery:
+        _draw_similar_gallery(fig2, gallery_axes, similar_patterns)
+    _stamp_footer(fig2, code, recent)
+    fname2 = f"{code}_{as_of_str}_macd.png"
+    path2 = os.path.join(output_dir, fname2)
+    fig2.savefig(path2, dpi=FIG_DPI, bbox_inches="tight", facecolor=CLR_BG, edgecolor="none")
+    plt.close(fig2)
+    logger.info("MACD/相似图已生成: %s", path2)
+
+    return path1  # 主入口保持兼容，返回 K 线图路径
 
 
 # ── 技术解读生成 ────────────────────────────────────────────────

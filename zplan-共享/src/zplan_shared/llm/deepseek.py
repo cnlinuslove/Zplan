@@ -39,10 +39,13 @@ _pace_lock = threading.Lock()
 
 
 class DeepSeekError(RuntimeError):
-    """DeepSeek API 调用失败。"""
+    """LLM API 调用失败。"""
 
 
-# 向后兼容别名（原 GeminiError）
+# ── 模型无关的通用别名（新代码请用这些）─────────────────────────
+LLMError = DeepSeekError
+
+# ── 向后兼容别名 ─────────────────────────────────────────────────
 GeminiError = DeepSeekError
 
 
@@ -405,3 +408,13 @@ def check_deepseek_connectivity() -> dict[str, Any]:
     if not deepseek_available():
         return {"ok": False, "error": "DEEPSEEK_API_KEY 未配置或为空"}
     return _check_deepseek_connectivity_once()
+
+
+# ── 模型无关的通用别名（新代码推荐使用）─────────────────────────
+# 切换模型只需改 .env 中的 DEEPSEEK_API_BASE_URL + DEEPSEEK_MODEL
+
+llm_available = deepseek_available
+generate_json = generate_json_with_deepseek
+generate_text = generate_text_with_deepseek
+chat_json = chat_json_with_deepseek
+check_llm_connectivity = check_deepseek_connectivity

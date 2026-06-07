@@ -298,37 +298,14 @@ async function main() {
           await ws.replyStream(frame, streamId, "正在检索资讯，请稍候…", false);
         }
         // 智能机器人仅接收 @ 消息，mentioned 始终为 true
-        const { text, templateCard, pdfPath } = await runZplanReply(query, childEnv, { userId, chatId, mentioned: true });
+        const { text, templateCard } = await runZplanReply(query, childEnv, { userId, chatId, mentioned: true });
 
         if (templateCard && ws.replyStreamWithCard) {
-          // 有模板卡片：文本 + 按钮卡片一起发送
-          await ws.replyStreamWithCard(frame, streamId, text, true, {
-            templateCard,
-          });
+          await ws.replyStreamWithCard(frame, streamId, text, true, { templateCard });
           console.log(`[wecom-zplan] 已回复 ${text.length} 字 + 卡片`);
         } else {
           await ws.replyStream(frame, streamId, text, true);
           console.log(`[wecom-zplan] 已回复 ${text.length} 字`);
-        }
-
-        // 发送 PDF 报告文件
-        if (pdfPath && existsSync(pdfPath)) {
-          try {
-            const fileBuffer = readFileSync(pdfPath);
-            const uploadResult = await ws.uploadMedia(fileBuffer, {
-              type: "file",
-              filename: pdfPath.split("/").pop() || "report.pdf",
-            });
-            if (uploadResult?.body?.media_id) {
-              await ws.reply(frame, {
-                msgtype: "file",
-                file: { media_id: uploadResult.body.media_id },
-              });
-              console.log(`[wecom-zplan] PDF 已发送: ${pdfPath}`);
-            }
-          } catch (e) {
-            console.error(`[wecom-zplan] PDF 发送失败: ${e.message}`);
-          }
         }
       } catch (e) {
         const msg = `处理失败：${e?.message || e}`;

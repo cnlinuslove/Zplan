@@ -281,20 +281,20 @@ def _reply_payload(
 def _pick_reply(pick: dict[str, Any], text: str) -> dict[str, Any]:
     """构建选股回复，同时尝试推送走势图 + PDF 报告（若已生成）。"""
     chart_path = pick.get("chart_path")
+    chart_macd_path = pick.get("chart_macd_path")
+    pdf_path = pick.get("pdf_path")
+
+    # 图片 + PDF 通过群机器人 webhook 推送
     if chart_path:
         try:
-            from wechat_push import push_wechat_image
+            from wechat_push import push_wechat_image, push_wechat_file
             push_wechat_image(chart_path)
+            if chart_macd_path:
+                push_wechat_image(chart_macd_path)
+            if pdf_path:
+                push_wechat_file(pdf_path)
         except Exception:
-            logger.warning("走势图推送失败", exc_info=True)
-
-    pdf_path = pick.get("pdf_path")
-    if pdf_path:
-        try:
-            from wechat_push import push_wechat_file
-            push_wechat_file(pdf_path)
-        except Exception:
-            logger.warning("PDF 推送失败", exc_info=True)
+            logger.warning("图表/PDF 推送失败", exc_info=True)
 
     return _reply_payload(
         str(pick.get("intent") or "pick"),

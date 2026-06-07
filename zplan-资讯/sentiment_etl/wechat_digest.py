@@ -34,6 +34,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "em_financial_flash": "东财快讯",
     "em_northbound_daily": "北向资金",
     "em_northbound_intraday": "北向分时",
+    "em_hsgt_daily": "沪深港通",
     "em_margin_account": "融资融券",
     "em_index_turnover": "主要指数",
     "newsapi": "NewsAPI",
@@ -212,6 +213,10 @@ def _section_brief_news(
 
 
 def _northbound_fact(df: pd.DataFrame | None) -> str | None:
+    """【已废弃】旧北向日频 API（当日成交净买额等字段 2024-08 起官方停披）。
+
+    保留仅为向后兼容 debug 样式；brief 样式请用 ``_hsgt_fact``。
+    """
     if df is None or df.empty:
         return None
     primary = None
@@ -226,7 +231,7 @@ def _northbound_fact(df: pd.DataFrame | None) -> str | None:
     d = _fmt_trade_date(last.get("as_of_utc"))
     val = _fmt_num(last.get("metric_value"), digits=2) + " 亿元"
 
-    # 数据陈旧告警：北向资金 API 关键字段可能已停更
+    # 数据陈旧告警
     stale_note = ""
     try:
         from datetime import datetime, timezone
@@ -243,6 +248,51 @@ def _northbound_fact(df: pd.DataFrame | None) -> str | None:
         pass
 
     return f"北向资金（数据日 {d}）{pname} {val}{stale_note}"
+
+
+def _hsgt_fact(df: pd.DataFrame | None) -> str | None:
+    """沪深港通日频汇总（2024-08 新格式）。
+
+    北向净买额官方已停披 → 用涨跌家数作情绪代理；南向净买额正常披露。
+    """
+    if df is None or df.empty or "factor_kind" not in df.columns:
+        return None
+    hsgt = df[df["factor_kind"] == "hsgt_daily"]
+    if hsgt.empty:
+        return None
+
+    # 数据日期
+    latest_ts = hsgt["as_of_utc"].max()
+    d = _fmt_trade_date(latest_ts)
+
+    # 南向净买额
+    south_parts: list[str] = []
+    for subj, label in [("southbound_sh", "沪"), ("southbound_sz", "深")]:
+        row = _latest_metric_row(hsgt[hsgt["subject"] == subj], "net_buy_amt")
+        if row is not None:
+            amt = row["metric_value"]
+            south_parts.append(f"{label} {_fmt_num(amt, digits=2)} 亿")
+
+    # 北向涨跌家数
+    north_parts: list[str] = []
+    for subj, label in [("northbound_sh", "上证"), ("northbound_sz", "深证")]:
+        up = _latest_metric_row(hsgt[hsgt["subject"] == subj], "up_count")
+        down = _latest_metric_row(hsgt[hsgt["subject"] == subj], "down_count")
+        if up is not None and down is not None:
+            u, d_val = int(up["metric_value"]), int(down["metric_value"])
+            total = u + d_val
+            ratio = u / total * 100 if total > 0 else 0
+            north_parts.append(f"{label} {ratio:.0f}%")
+
+    lines: list[str] = []
+    if south_parts:
+        lines.append(f"南向净买额 " + "，".join(south_parts))
+    if north_parts:
+        lines.append(f"北向涨跌比 " + "，".join(north_parts))
+    if not lines:
+        return None
+
+    return f"沪深港通（数据日 {d}）" + "；".join(lines) + "。⚠️ 北向净买卖额自 2024-08 起官方暂停披露"
 
 
 def _margin_fact(df: pd.DataFrame | None) -> str | None:
@@ -283,9 +333,19 @@ def _index_fact(df: pd.DataFrame | None) -> str | None:
 
 def _section_market_brief(fetched: dict[str, Any]) -> str | None:
     sentences: list[str] = []
-    nb = _northbound_fact(fetched.get("em_northbound_daily"))
-    if nb:
-        sentences.append(nb)
+
+    # 优先用新沪深港通汇总（含南向净买额 + 北向涨跌比）
+    hsgt_df = fetched.get("em_hsgt_daily")
+    if hsgt_df is not None and not (hasattr(hsgt_df, "empty") and hsgt_df.empty):
+        hsgt = _hsgt_fact(hsgt_df)
+        if hsgt:
+            sentences.append(hsgt)
+    else:
+        # 回退旧北向（debug 时可能仍有少量数据）
+        nb = _northbound_fact(fetched.get("em_northbound_daily"))
+        if nb:
+            sentences.append(nb)
+
     mg = _margin_fact(fetched.get("em_margin_account"))
     if mg:
         sentences.append(mg)
@@ -630,6 +690,7 @@ def _stats_from_db() -> dict[str, Any]:
         for kind, key in (
             ("northbound_daily", "em_northbound_daily"),
             ("northbound_intraday", "em_northbound_intraday"),
+            ("hsgt_daily", "em_hsgt_daily"),
             ("margin_account", "em_margin_account"),
             ("index_turnover", "em_index_turnover"),
         ):

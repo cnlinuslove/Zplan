@@ -14,6 +14,7 @@ from config import (
 from zplan_shared.models import init_db
 from sentiment_etl.akshare_em import (
     fetch_em_financial_flash_df,
+    fetch_em_hsgt_daily_summary_df,
     fetch_em_index_turnover_df,
     fetch_em_margin_market_factors_df,
     fetch_em_northbound_daily_factors_df,
@@ -59,6 +60,7 @@ def run_sentiment_etl(*, push_wechat: bool = True) -> dict[str, Any]:
         ("em_financial_flash", fetch_em_financial_flash_df, _load_flash),
         ("em_northbound_daily", fetch_em_northbound_daily_factors_df, _load_sentiment),
         ("em_northbound_intraday", fetch_em_northbound_intraday_factors_df, _load_sentiment),
+        ("em_hsgt_daily", fetch_em_hsgt_daily_summary_df, _load_sentiment),
         ("em_margin_account", fetch_em_margin_market_factors_df, _load_sentiment),
         ("em_index_turnover", fetch_em_index_turnover_df, _load_sentiment),
         ("newsapi", fetch_newsapi_articles_df, lambda df: load_global_news_df(df, channel="newsapi")),
@@ -149,12 +151,14 @@ def _check_data_staleness() -> list[str]:
     thresholds: dict[str, int] = {
         "northbound_daily": SENTIMENT_STALE_DAYS_NORTHBOUND,
         "northbound_intraday": SENTIMENT_STALE_DAYS_NORTHBOUND,
+        "hsgt_daily": SENTIMENT_STALE_DAYS_NORTHBOUND,
         "margin_account": SENTIMENT_STALE_DAYS_MARGIN,
         "index_turnover": SENTIMENT_STALE_DAYS_INDEX,
     }
     # 关键指标：如果这些指标的最新非 NaN 日期与 factor 最新日期差距超过此天数，说明 API 已停更
     _critical_metrics: dict[str, list[str]] = {
         "northbound_daily": ["当日成交净买额", "当日资金流入", "买入成交额"],
+        "hsgt_daily": ["net_buy_amt", "net_flow_in", "up_count", "down_count"],
         "margin_account": ["融资余额", "融资买入额"],
     }
     _metric_stale_days = 10  # 指标级陈旧阈值（与 factor 最新日期的差距）

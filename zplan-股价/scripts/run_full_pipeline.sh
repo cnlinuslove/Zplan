@@ -37,6 +37,7 @@ checks = [
     ("股价日线",      "daily_prices",         "trade_date"),
     ("衍生指标",      "daily_features",       "trade_date"),
     ("估值截面",      "daily_snapshot",       "trade_date"),
+    ("筹码峰",        "daily_chip",           "trade_date"),
     ("季报财务",      "financial_indicators", "report_date"),
 ]
 for label, table, col in checks:
@@ -115,6 +116,9 @@ run_step "衍生-物化" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" scripts/ma
 
 # 3. 估值截面
 run_step "估值截面" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" main.py --snapshot
+
+# 3b. 筹码峰 ETL（增量模式，首次约 40min，后续 ~5min）
+run_step "筹码峰ETL" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" main.py --chip
 
 # 4. 季报财务
 if $LITE; then

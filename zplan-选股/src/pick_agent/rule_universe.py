@@ -36,6 +36,18 @@ from pick_agent.strategy import PickStrategy, load_strategy
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_float(val: Any) -> float | None:
+    """安全转 float，None / NaN → None。"""
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return None if (isinstance(f, float) and np.isnan(f)) else f
+    except (TypeError, ValueError):
+        return None
+
+
 # ── 概念热度（生产模式）─────────────────────────────
 
 _concept_members_cache: dict[str, list[str]] | None = None
@@ -194,6 +206,43 @@ def build_rule_scores_universe(
             sorted(concept_heat.items(), key=lambda x: -x[1])[:5] if concept_heat else [],
         )
 
+        # ── 筹码峰注入（灰度开关）──
+        _chip_lookup: dict[str, dict[str, float | None]] = {}
+        if strat.filters.get("enable_chip_factors"):
+            try:
+                from zplan_shared.market import get_chip_panel
+
+                _chip_df = get_chip_panel(as_of=trade_date)
+                if not _chip_df.empty:
+                    for _, cr in _chip_df.iterrows():
+                        ccode = str(cr["ts_code"])
+                        avg = cr.get("avg_cost")
+                        close_v = close_map.get(ccode) if ccode in close_map else None
+                        cp_val = None
+                        if (
+                            close_v is not None
+                            and avg is not None
+                            and float(avg) > 0
+                            and not pd.isna(close_v)
+                        ):
+                            cp_val = (float(close_v) - float(avg)) / float(avg) * 100.0
+                        _chip_lookup[ccode] = {
+                            "_profit_ratio": _safe_float(cr.get("profit_ratio")),
+                            "_avg_cost": _safe_float(avg),
+                            "_concentration_90": _safe_float(cr.get("concentration_90")),
+                            "_concentration_70": _safe_float(cr.get("concentration_70")),
+                            "_cost_proximity": cp_val,
+                        }
+                    logger.info(
+                        "筹码峰注入: %s/%s 票命中",
+                        len(_chip_lookup),
+                        len(feat_df),
+                    )
+                    # 启用筹码因子时切换 preset
+                    v2_factors, v2_weights = PRESET_SCHEMES["full_tech_plus_chip"]
+            except Exception:
+                logger.warning("筹码峰数据加载失败，降级为无筹码模式", exc_info=True)
+
     rows: list[dict[str, Any]] = []
     for _, r in feat_df.iterrows():
         code = str(r["ts_code"])
@@ -206,6 +255,10 @@ def build_rule_scores_universe(
             heats = [concept_heat.get(c) for c in concepts if c in concept_heat]
             features["_concept_heat"] = float(np.mean(heats)) if heats else 0.0
             features["_concept_count"] = float(len(concepts))
+            # 注入筹码峰数据
+            chip_data = _chip_lookup.get(code)
+            if chip_data:
+                features.update(chip_data)
             # v2 评分
             score = compute_score_v2(
                 features, factors=v2_factors, weights=v2_weights, code=code

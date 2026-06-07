@@ -318,6 +318,93 @@ def _index_turnover_rows_from_tx(sym: str, n_days: int) -> list[dict]:
     return out
 
 
+def fetch_em_hsgt_daily_summary_df(max_rows: int = 120) -> pd.DataFrame:
+    """
+    沪深港通日频汇总（东财 `stock_hsgt_fund_flow_summary_em`，2024-08 后替代旧北向 API）。
+
+    北向净买额官方已停披（返回 0），本函数提取仍正常披露的字段：
+    - 北向涨跌家数（上涨数/下跌数/持平数）→ 外资持仓情绪代理
+    - 南向成交净买额（沪/深）→ 跨市场资金流
+    - 相关指数涨跌幅
+
+    长表：factor_kind, as_of_utc, subject, metric_name, metric_value, extra_json
+    """
+    _AK_HSGT_FLOW = "stock_hsgt_fund_flow_summary_em"
+    raw = getattr(ak, _AK_HSGT_FLOW)()
+    if raw is None or raw.empty:
+        return pd.DataFrame(
+            columns=[
+                "factor_kind",
+                "as_of_utc",
+                "subject",
+                "metric_name",
+                "metric_value",
+                "extra_json",
+            ]
+        )
+
+    rows: list[dict] = []
+    for _, r in raw.iterrows():
+        trade_d = r.get("交易日")
+        td = pd.to_datetime(trade_d, errors="coerce")
+        if pd.isna(td):
+            continue
+        as_of = trade_date_to_utc_midnight_trade_bucket(td.date())
+        board = str(r.get("板块", "") or "").strip()  # 沪股通/深股通/港股通(沪)/港股通(深)
+        direction = str(r.get("资金方向", "") or "").strip()  # 北向/南向
+
+        # 统一 subject 格式：northbound_sh / northbound_sz / southbound_sh / southbound_sz
+        if "沪股通" in board:
+            subject = "northbound_sh"
+        elif "深股通" in board:
+            subject = "northbound_sz"
+        elif "港股通(沪)" in board:
+            subject = "southbound_sh"
+        elif "港股通(深)" in board:
+            subject = "southbound_sz"
+        else:
+            continue
+
+        extras = {
+            k: (int(r[k]) if isinstance(r[k], (pd.Int64Dtype,)) else r[k])
+            for k in raw.columns
+            if k not in ("交易日",)
+        }
+
+        # 提取数值型指标
+        numeric_fields = {
+            "成交净买额": "net_buy_amt",
+            "资金净流入": "net_flow_in",
+            "上涨数": "up_count",
+            "下跌数": "down_count",
+            "持平数": "flat_count",
+            "指数涨跌幅": "index_pct_chg",
+        }
+        for cn_name, en_name in numeric_fields.items():
+            val = r.get(cn_name)
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                continue
+            try:
+                fv = float(val)
+            except (TypeError, ValueError):
+                continue
+            rows.append(
+                {
+                    "factor_kind": "hsgt_daily",
+                    "as_of_utc": as_of,
+                    "subject": subject,
+                    "metric_name": en_name,
+                    "metric_value": fv,
+                    "extra_json": to_json_text(
+                        {**extras, "direction": direction, "board": board}
+                    ),
+                }
+            )
+
+    _sleep_rate()
+    return pd.DataFrame(rows)
+
+
 def fetch_em_index_turnover_df(
     symbols: Iterable[str] | None = None,
     days: int | None = None,

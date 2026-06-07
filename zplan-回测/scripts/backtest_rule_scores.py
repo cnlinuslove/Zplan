@@ -438,6 +438,64 @@ def _get_quality_for_date(
     }
 
 
+def _load_chip_panel_by_dates(
+    sample_dates: list[date],
+) -> dict[str, dict[str, dict[str, float | None]]]:
+    """批量加载历史筹码峰数据。
+
+    Returns:
+        {trade_date_str: {ts_code: {profit_ratio, avg_cost, concentration_90, concentration_70}}}
+        若 ``daily_chip`` 表不存在或无数据则返回空 dict。
+    """
+    if not sample_dates:
+        return {}
+    try:
+        from zplan_shared.db_engine import build_engine as _build_eng
+        engine = _build_eng()
+        start_d = sample_dates[0]
+        end_d = sample_dates[-1]
+        sql = """
+            SELECT ts_code, trade_date, profit_ratio, avg_cost,
+                   concentration_90, concentration_70,
+                   cost_90_low, cost_90_high
+            FROM daily_chip
+            WHERE market = 'a' AND trade_date >= :start AND trade_date <= :end
+            ORDER BY ts_code, trade_date
+        """
+        cdf = pd.read_sql_query(sql, engine, params={"start": start_d, "end": end_d})
+    except Exception:
+        logger.info("筹码峰表 daily_chip 不可用，跳过筹码因子")
+        return {}
+
+    if cdf.empty:
+        return {}
+
+    result: dict[str, dict[str, dict[str, float | None]]] = {}
+    for d, grp in cdf.groupby("trade_date"):
+        date_key = str(d)
+        result[date_key] = {}
+        for _, row in grp.iterrows():
+            code = str(row["ts_code"])
+            result[date_key][code] = {
+                "profit_ratio": _safe_float_backtest(row.get("profit_ratio")),
+                "avg_cost": _safe_float_backtest(row.get("avg_cost")),
+                "concentration_90": _safe_float_backtest(row.get("concentration_90")),
+                "concentration_70": _safe_float_backtest(row.get("concentration_70")),
+            }
+    logger.info("筹码峰历史数据: %s 个交易日, %s 条记录", len(result), len(cdf))
+    return result
+
+
+def _safe_float_backtest(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return None if pd.isna(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_bars_by_code(all_data: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """预分割 OHLCV 数据：{ts_code: DataFrame_sorted_by_trade_date}。
 
@@ -459,6 +517,7 @@ def run_backtest(
     factor_sets: dict[str, tuple[list[str], dict[str, float]]] | None = None,
     fin_data: dict[str, list[dict[str, Any]]] | None = None,
     concept_members: dict[str, list[str]] | None = None,
+    chip_data: dict[str, dict[str, dict[str, float | None]]] | None = None,
 ) -> pd.DataFrame:
     """主回测循环：预计算 enrich_bars → 遍历采样日期提取特征 → 评分 → 前向收益。
 
@@ -466,6 +525,7 @@ def run_backtest(
         factor_sets: {方案名: (因子列表, 权重dict)}
         fin_data: 财务质量数据
         concept_members: 概念-股票映射（用于计算概念热度）
+        chip_data: 筹码峰历史数据 {trade_date: {ts_code: {field: value}}}
     """
     t_start = time.time()
 
@@ -486,8 +546,23 @@ def run_backtest(
     n_dates = len(sample_dates)
     max_horizon = max(horizons)
 
+    # 筹码峰覆盖率日志
+    if chip_data:
+        chip_dates = set(chip_data.keys())
+        covered = [d for d in sample_dates if d in chip_dates]
+        logger.info(
+            "筹码峰数据: %s/%s 采样日期命中 (%.1f%%)",
+            len(covered), len(sample_dates),
+            len(covered) / len(sample_dates) * 100 if sample_dates else 0,
+        )
+
     for i, d in enumerate(sample_dates):
         t_iter = time.time()
+
+        # 该日期的筹码峰数据（预取当日截面）
+        chip_today: dict[str, dict[str, float | None]] = {}
+        if chip_data:
+            chip_today = chip_data.get(d, {})
 
         # 该日期的财务质量数据预注入
         if fin_data and factor_sets:
@@ -534,6 +609,21 @@ def run_backtest(
             # 注入概念数量
             if concept_members:
                 feat["_concept_count"] = float(len(concept_members.get(code, [])))
+
+            # 注入筹码峰数据
+            if chip_today and code in chip_today:
+                c = chip_today[code]
+                feat["_profit_ratio"] = c.get("profit_ratio")
+                feat["_avg_cost"] = c.get("avg_cost")
+                feat["_concentration_90"] = c.get("concentration_90")
+                feat["_concentration_70"] = c.get("concentration_70")
+                avg_cost = c.get("avg_cost")
+                if (
+                    close_val is not None
+                    and avg_cost is not None
+                    and float(avg_cost) > 0
+                ):
+                    feat["_cost_proximity"] = (float(close_val) - float(avg_cost)) / float(avg_cost) * 100.0
 
             raw = quick_technical_score(feat)
             ret_20d = feat.get("ret_20d")
@@ -1123,6 +1213,9 @@ def main(argv: list[str] | None = None) -> None:
     max_horizon = max(args.horizons)
     sample_dates = get_sample_dates(trade_dates, freq=args.freq, max_lookahead_days=max_horizon + 20)
 
+    # 筹码峰数据（用于筹码因子——需在 sample_dates 确定后加载）
+    chip_data = _load_chip_panel_by_dates(sample_dates) if factor_sets else None
+
     if args.dry_run:
         test_date = sample_dates[0]
         logger.info("Dry-run 模式：先预计算特征，再测试 1 个日期 %s", test_date)
@@ -1161,7 +1254,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     # 回测
-    results = run_backtest(all_data, sample_dates, args.horizons, factor_sets, fin_data, concept_members)
+    results = run_backtest(all_data, sample_dates, args.horizons, factor_sets, fin_data, concept_members, chip_data)
 
     # 分析
     analysis = run_all_analysis(results, args.horizons, args.top_n)

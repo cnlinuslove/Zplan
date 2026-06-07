@@ -446,6 +446,111 @@ def factor_profit_stability(feat: dict[str, float | None], code: str = "") -> fl
 
 
 # ═══════════════════════════════════════════════════════
+# 族 5：筹码峰因子（Chip Distribution）
+# ═══════════════════════════════════════════════════════
+
+def factor_chip_profit_ratio(feat: dict[str, float | None]) -> float:
+    """获利比例因子：高获利比例 → 抛压风险（反转视角）。
+
+    获利比例表示有多少比例的筹码处于盈利状态。
+    - profit_ratio > 80%: 绝大多数获利，抛压大 → -20 ~ -30
+    - profit_ratio 60-80%: 多数获利 → -5 ~ -15
+    - profit_ratio 40-60%: 均衡 → 0
+    - profit_ratio 20-40%: 多数亏损 → +5 ~ +15
+    - profit_ratio < 20%: 深度套牢，抛压枯竭 → +15 ~ +25
+    """
+    pr = _safe_float(feat, "_profit_ratio")
+    if pr is None:
+        return 0.0
+    if pr < 15:
+        return 25.0
+    if pr < 20:
+        return _clamp(15.0 + (20 - pr) / 5 * 10)
+    if pr < 40:
+        return _clamp(5.0 + (40 - pr) / 20 * 10)
+    if pr <= 60:
+        return 0.0
+    if pr <= 80:
+        return _clamp(-5.0 - (pr - 60) / 20 * 10)
+    if pr <= 90:
+        return _clamp(-15.0 - (pr - 80) / 10 * 15)
+    return -30.0
+
+
+def factor_chip_concentration(feat: dict[str, float | None]) -> float:
+    """筹码集中度因子：集中度高 → 主力控盘，可能突破。
+
+    concentration_90 越低表示筹码越集中（值域 0~1）。
+    - < 0.10: 高度集中，强控盘 → +25
+    - 0.10 ~ 0.15: 集中 → +15 ~ +25
+    - 0.15 ~ 0.30: 较集中 → +5 ~ +15
+    - 0.30 ~ 0.50: 轻度集中 → 0 ~ +5
+    - 0.50 ~ 0.70: 分散 → -5 ~ 0
+    - > 0.70: 高度分散 → -10
+    """
+    c90 = _safe_float(feat, "_concentration_90")
+    if c90 is None:
+        return 0.0
+    if c90 < 0.10:
+        return 25.0
+    if c90 < 0.15:
+        return _clamp(15.0 + (0.15 - c90) / 0.05 * 10)
+    if c90 < 0.30:
+        return _clamp(5.0 + (0.30 - c90) / 0.15 * 10)
+    if c90 <= 0.50:
+        return _clamp(0.0 + (0.50 - c90) / 0.20 * 5)
+    if c90 <= 0.70:
+        return _clamp(-5.0 + (0.70 - c90) / 0.20 * 5, lo=-5)
+    return -10.0
+
+
+def factor_cost_proximity(feat: dict[str, float | None]) -> float:
+    """成本接近度因子：价格接近平均成本 → 支撑/共振区。
+
+    _cost_proximity = (close - avg_cost) / avg_cost * 100。
+    - 接近 0（±3%）: 价格在成本线附近 → 强支撑 +10 ~ +15
+    - 正向较大（>15%）: 价格远高于成本 → 获利盘抛压 -15
+    - 负向较大（<-20%）: 价格远低于成本 → 深度套牢 +10
+    """
+    cp = _safe_float(feat, "_cost_proximity")
+    if cp is None:
+        return 0.0
+    # 成本附近：共振支撑
+    if abs(cp) <= 3:
+        return _clamp(15.0 - abs(cp) / 3 * 5, lo=10)
+    if abs(cp) <= 8:
+        return _clamp(5.0 - (abs(cp) - 3) / 5 * 5, lo=0)
+    # 远高于成本
+    if cp > 15:
+        return -15.0
+    if cp > 8:
+        return _clamp(-5.0 - (cp - 8) / 7 * 10, lo=-15)
+    # 远低于成本
+    if cp < -20:
+        return 10.0
+    if cp < -8:
+        return _clamp(5.0 + (abs(cp) - 8) / 12 * 5, hi=10)
+    return 0.0
+
+
+def factor_chip_concentration_70(feat: dict[str, float | None]) -> float:
+    """70% 筹码集中度因子（70% 区间更窄，增强信号）。
+
+    与 90% 集中度形成共识：两者同时低时信号更强。
+    """
+    c70 = _safe_float(feat, "_concentration_70")
+    if c70 is None:
+        return 0.0
+    if c70 < 0.10:
+        return 15.0
+    if c70 < 0.20:
+        return _clamp(5.0 + (0.20 - c70) / 0.10 * 10)
+    if c70 <= 0.35:
+        return _clamp(0.0 + (0.35 - c70) / 0.15 * 5)
+    return -5.0
+
+
+# ═══════════════════════════════════════════════════════
 # 因子注册表 & 合成
 # ═══════════════════════════════════════════════════════
 
@@ -467,6 +572,11 @@ TECH_FACTORS: dict[str, FactorFn] = {
     "concept_heat": factor_concept_heat,
     "concept_diversity": factor_concept_diversity,
     "turnover_attention": factor_turnover_attention,
+    # 族 5：筹码峰 (NEW)
+    "chip_profit_ratio": factor_chip_profit_ratio,
+    "chip_concentration": factor_chip_concentration,
+    "cost_proximity": factor_cost_proximity,
+    "chip_concentration_70": factor_chip_concentration_70,
 }
 
 ALL_FACTOR_NAMES = list(TECH_FACTORS.keys()) + [
@@ -590,5 +700,23 @@ PRESET_SCHEMES: dict[str, tuple[list[str], dict[str, float]]] = {
          "volume_direction": 1.2, "concept_heat": 1.2,
          "concept_diversity": 0.4, "turnover_attention": 0.6,
          "volume_health": 0.6, "low_volatility": 0.3},
+    ),
+    # ── 筹码峰方案 (NEW) ──
+    # 纯反转 + 筹码峰（测试筹码因子的独立增量效果）
+    "chip_reversal": (
+        ["ret_20d_reversal", "drawdown_reversal", "rsi_oversold",
+         "close_vs_ma20", "days_since_high",
+         "chip_profit_ratio", "chip_concentration", "cost_proximity",
+         "chip_concentration_70"],
+        {"ret_20d_reversal": 1.0, "drawdown_reversal": 0.8,
+         "rsi_oversold": 0.5, "close_vs_ma20": 0.5,
+         "days_since_high": 0.5,
+         "chip_profit_ratio": 1.2, "chip_concentration": 1.0,
+         "cost_proximity": 1.0, "chip_concentration_70": 0.5},
+    ),
+    # 全部技术因子 + 筹码峰
+    "full_tech_plus_chip": (
+        list(TECH_FACTORS.keys()),
+        {k: 0.55 for k in TECH_FACTORS},
     ),
 }

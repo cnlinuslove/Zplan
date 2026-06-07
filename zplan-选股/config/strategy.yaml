@@ -22,6 +22,10 @@ filters:
   max_total_mv: null
   max_ret_20d: 5.0    # ML r=-0.56：>5% 反转概率陡升，预筛直接剔除
   max_high_60d_pct: 0.95  # 接近 60 日高点 >95% 剔除（追高空间有限）
+  # ── 筹码峰（灰度开关，默认关闭）──
+  enable_chip_factors: false    # 是否启用筹码峰因子（需 daily_chip 表有数据）
+  min_concentration_90: null     # 最低 90% 集中度过滤（null=不启用，建议 0.05~0.3）
+  max_profit_ratio: null         # 最高获利比例过滤（null=不启用，建议 85~95）
 
 # 行业分散：防止极端集中，但不过度分散（熊市中弱行业拖累收益）
 diversification:
@@ -49,6 +53,12 @@ market_health:
 
 llm:
   enabled: true
+  # 模型名（OpenAI 兼容 API）。当前默认 DeepSeek。
+  # 切换示例：
+  #   DeepSeek V3:  deepseek-chat      (默认)
+  #   DeepSeek R1:  deepseek-reasoner
+  #   Gemini 2.5:   gemini-2.5-pro     (需同时改 .env 中 DEEPSEEK_API_BASE_URL)
+  #   GPT-4o:       gpt-4o             (需同时改 .env 中 DEEPSEEK_API_BASE_URL)
   model: deepseek-chat
   scan_brief: true
 

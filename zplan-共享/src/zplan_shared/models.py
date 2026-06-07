@@ -194,6 +194,33 @@ class DailySnapshot(Base):
     ingested_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class DailyChip(Base):
+    """筹码峰日频数据（东方财富 CYQ，90 日区间）。
+
+    每票每天一行，记录该交易日收盘后的筹码分布状态。
+    数据源：``ak.stock_cyq_em(symbol, adjust="qfq")``。
+    """
+
+    __tablename__ = "daily_chip"
+    __table_args__ = (
+        UniqueConstraint("ts_code", "trade_date", "market", name="uq_daily_chip_ts_date_market"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    trade_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
+    profit_ratio: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="获利比例 (%)")
+    avg_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="平均成本 (元)")
+    cost_90_low: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="90%成本-低")
+    cost_90_high: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="90%成本-高")
+    concentration_90: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="90集中度")
+    cost_70_low: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="70%成本-低")
+    cost_70_high: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="70%成本-高")
+    concentration_70: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="70集中度")
+    ingested_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class FinancialIndicator(Base):
     __tablename__ = "financial_indicators"
     __table_args__ = (UniqueConstraint("ts_code", "report_date", "market", name="uq_fi_ts_report_market"),)
@@ -626,8 +653,135 @@ class ChatHistory(Base):
     )
 
 
+# ── Web 对话模型（zplan-web 专用）──────────────────────────────
+
+
+class WebChatSession(Base):
+    """Web 聊天会话（独立于企微的 in-memory session）。"""
+
+    __tablename__ = "web_chat_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    updated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class WebChatMessage(Base):
+    """Web 聊天消息（含 token 用量追踪）。"""
+
+    __tablename__ = "web_chat_messages"
+    __table_args__ = (
+        Index("ix_web_chat_msg_session_created", "session_id", "created_at_utc"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("web_chat_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | assistant | system
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    intent: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    elapsed_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+
+
+class LlmResponseCache(Base):
+    """LLM 响应缓存——相同 prompt hash 命中时直接返回，节省 API 费用。"""
+
+    __tablename__ = "llm_response_cache"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cache_key: Mapped[str] = mapped_column(
+        String(128), unique=True, nullable=False, index=True
+    )
+    response_json: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+    ttl_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
+
+
 engine = build_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+
+def _migrate_web_chat() -> None:
+    """SQLite 旧库补建 web_chat 相关表。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "web_chat_sessions" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE web_chat_sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title VARCHAR(128),
+                        is_active BOOLEAN NOT NULL DEFAULT 1,
+                        created_at_utc DATETIME NOT NULL DEFAULT (datetime('now')),
+                        updated_at_utc DATETIME NOT NULL DEFAULT (datetime('now'))
+                    )"""
+                )
+            )
+        if "web_chat_messages" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE web_chat_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id INTEGER NOT NULL REFERENCES web_chat_sessions(id) ON DELETE CASCADE,
+                        role VARCHAR(16) NOT NULL,
+                        content TEXT NOT NULL,
+                        intent VARCHAR(32),
+                        prompt_tokens INTEGER,
+                        output_tokens INTEGER,
+                        cost_usd FLOAT,
+                        elapsed_ms INTEGER,
+                        created_at_utc DATETIME NOT NULL DEFAULT (datetime('now'))
+                    )"""
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_web_chat_msg_session_created "
+                    "ON web_chat_messages (session_id, created_at_utc)"
+                )
+            )
+        if "llm_response_cache" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE llm_response_cache (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        cache_key VARCHAR(128) UNIQUE NOT NULL,
+                        response_json TEXT NOT NULL,
+                        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                        output_tokens INTEGER NOT NULL DEFAULT 0,
+                        created_at_utc DATETIME NOT NULL DEFAULT (datetime('now')),
+                        ttl_seconds INTEGER NOT NULL DEFAULT 3600
+                    )"""
+                )
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_llm_cache_key ON llm_response_cache (cache_key)")
+            )
 
 
 def init_db() -> None:
@@ -639,6 +793,8 @@ def init_db() -> None:
     _migrate_chat_history()
     _migrate_hk_market_column()
     _migrate_ah_cross_ref()
+    _migrate_daily_chip()
+    _migrate_web_chat()
     _ensure_sqlite_indexes()
     _ensure_news_stock_link_table()
 
@@ -1091,3 +1247,41 @@ def _migrate_ah_cross_ref() -> None:
             )
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ah_a_code ON ah_cross_ref (a_code)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ah_hk_code ON ah_cross_ref (hk_code)"))
+
+
+def _migrate_daily_chip() -> None:
+    """SQLite 旧库补建 daily_chip 表（筹码峰数据）。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "daily_chip" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE daily_chip (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts_code VARCHAR(16) NOT NULL,
+                        trade_date DATE NOT NULL,
+                        market VARCHAR(8) NOT NULL DEFAULT 'a',
+                        profit_ratio FLOAT,
+                        avg_cost FLOAT,
+                        cost_90_low FLOAT,
+                        cost_90_high FLOAT,
+                        concentration_90 FLOAT,
+                        cost_70_low FLOAT,
+                        cost_70_high FLOAT,
+                        concentration_70 FLOAT,
+                        ingested_at DATETIME,
+                        UNIQUE(ts_code, trade_date, market)
+                    )"""
+                )
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_daily_chip_trade_date ON daily_chip (trade_date)")
+            )

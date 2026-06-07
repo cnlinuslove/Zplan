@@ -316,3 +316,92 @@ def get_minute_bars(
     if df.empty:
         return df
     return df.set_index("bar_time")
+
+
+# ── 筹码峰 (CYQ) ────────────────────────────────────────────
+
+CHIP_COLUMNS = (
+    "ts_code",
+    "trade_date",
+    "profit_ratio",
+    "avg_cost",
+    "cost_90_low",
+    "cost_90_high",
+    "concentration_90",
+    "cost_70_low",
+    "cost_70_high",
+    "concentration_70",
+)
+
+
+def get_chip_panel(
+    as_of: str | date | None = None,
+    *,
+    market: str = "a",
+) -> pd.DataFrame:
+    """指定交易日全市场筹码峰截面。``as_of`` 默认最新交易日。
+
+    返回 DataFrame，包含 ``ts_code`` + ``CHIP_COLUMNS`` 中的筹码字段。
+    若 ``daily_chip`` 表为空则返回空 DataFrame。
+    """
+    from zplan_shared.models import DailyChip
+
+    init_db()
+    as_of_d = as_of if isinstance(as_of, date) else _parse_date(as_of) if as_of else None
+    if as_of_d is None:
+        as_of_d = latest_trade_date(market=market)
+    if as_of_d is None:
+        return pd.DataFrame(columns=list(CHIP_COLUMNS))
+
+    with SessionLocal() as session:
+        rows = (
+            session.execute(
+                select(DailyChip).where(
+                    DailyChip.trade_date == as_of_d,
+                    DailyChip.market == market,
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    records = [{c: getattr(r, c) for c in CHIP_COLUMNS} for r in rows]
+    return pd.DataFrame(records)
+
+
+def get_stock_chip(
+    ts_code: str,
+    as_of: str | date | None = None,
+    *,
+    market: str = "a",
+) -> dict[str, Any]:
+    """单票最新筹码峰快照。
+
+    Returns:
+        dict 包含筹码字段（不含 ``ts_code`` / ``trade_date``），无数据时为空 dict。
+    """
+    from zplan_shared.models import DailyChip
+
+    init_db()
+    code = resolve_ts_code(ts_code)
+    as_of_d = as_of if isinstance(as_of, date) else _parse_date(as_of) if as_of else None
+    if as_of_d is None:
+        as_of_d = latest_trade_date(market=market)
+    if as_of_d is None:
+        return {}
+
+    with SessionLocal() as session:
+        row = (
+            session.execute(
+                select(DailyChip).where(
+                    DailyChip.ts_code == code,
+                    DailyChip.trade_date == as_of_d,
+                    DailyChip.market == market,
+                )
+            )
+            .scalar_one_or_none()
+        )
+
+    if row is None:
+        return {}
+    return {c: getattr(row, c) for c in CHIP_COLUMNS if c not in ("ts_code", "trade_date")}

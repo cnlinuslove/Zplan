@@ -1,4 +1,4 @@
-"""DeepSeek 驱动的个股深度研究与打分。"""
+"""LLM 驱动的个股深度研究与打分（默认 DeepSeek，可通过 .env 切换模型）。"""
 from __future__ import annotations
 
 import json
@@ -7,21 +7,30 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from zplan_shared.config import DEEPSEEK_MODEL, GEMINI_MODEL
+from zplan_shared.config import DEEPSEEK_MODEL, GEMINI_MODEL, LLM_MODEL
 from zplan_shared.llm.gemini import (
-    GeminiError,
-    gemini_available,
-    generate_json_with_gemini,
+    LLMError,
+    generate_json,
+    llm_available,
     pop_usage,
 )
+# 模块内向下兼容别名
+GeminiError = LLMError
+gemini_available = llm_available
+generate_json_with_gemini = generate_json
 
 # 实际使用的 LLM 模型
-_LLM_MODEL = DEEPSEEK_MODEL or GEMINI_MODEL
+_LLM_MODEL = LLM_MODEL or DEEPSEEK_MODEL or GEMINI_MODEL
 from zplan_shared.market import get_bars
 
 from pick_agent.concept_tags import concepts_for_code
 from pick_agent.report import build_research_report, format_report_markdown
 from pick_agent.strategy import PickStrategy, load_strategy
+
+try:
+    from zplan_shared.enrich_company import build_enrich_prompt_section as _build_enrich_section
+except ImportError:
+    _build_enrich_section = None
 
 
 _RESEARCH_SCHEMA: dict[str, Any] = {
@@ -80,6 +89,19 @@ _RESEARCH_SCHEMA: dict[str, Any] = {
         "scenarios",
     ],
 }
+
+
+def _enrich_block(ts_code: str) -> str:
+    """从 enrich_company 表拉取 P0+P1 数据，拼成 prompt 注入块。"""
+    if _build_enrich_section is None:
+        return ""
+    try:
+        section = _build_enrich_section(str(ts_code))
+        if section.strip():
+            return f"\n【深度数据：公司档案/行业对比/机构研报/持仓】\n{section}\n"
+    except Exception:
+        pass
+    return ""
 
 
 def _bars_table(bars, n: int = 30) -> list[dict[str, Any]]:
@@ -144,16 +166,18 @@ def _build_prompt(base_report: dict[str, Any], bars_table: list[dict[str, Any]])
 【量化与资讯上下文】
 {json.dumps(ctx, ensure_ascii=False, indent=2)}
 
+{_enrich_block(meta["ts_code"])}
 【任务】
 1. **题材**：有「概念题材」则 price_trend_analysis / investment_summary 须点明核心题材与催化逻辑；列表为空则写明「库内无概念标签」，不得编造。
 2. **股价走势**：结合近 30 日 K 线；若 ret_20d 偏高（指标快照）须写清追高风险，不得只写看多。
 3. **技术面**：解读 KDJ、MACD、RSI、均线，给出 technical_score（0-100）；超买或近 60 日高位须降分。
-4. **财务**：有数据则评营收/利润/估值；无数据则 financial_score 取 50 并说明。
+4. **财务**：有数据则评营收/利润/估值；无数据则 financial_score 取 50 并说明。如有行业对比数据，须在 financial_analysis 中引用行业排名和中位数做同业比较。
 5. **资讯**：解读关联新闻与事件类型；无新闻则 news_score 取 50。
-6. **综合打分 composite_score**（0-100）与 recommendation（五选一）；追高风险时 composite 不得高于规则引擎综合分。
-7. buy_price 不得高于最新 close×0.99；target/stop 须与走势一致。
-8. scenarios：基准/回调/破位/突发利空等 3-4 条可执行策略。
-9. 输出合法 JSON，字段符合 schema；中文撰写。"""
+6. **竞争力与产品**：如有【公司档案/行业对比/研报/机构持仓】数据，须在 company_summary 中分析公司核心产品与竞争壁垒，在 opportunities 中引用券商评级和盈利预测，在 risks 中标注机构持仓变化风险。
+7. **综合打分 composite_score**（0-100）与 recommendation（五选一）；追高风险时 composite 不得高于规则引擎综合分。
+8. buy_price 不得高于最新 close×0.99；target/stop 须与走势一致。
+9. scenarios：基准/回调/破位/突发利空等 3-4 条可执行策略。
+10. 输出合法 JSON，字段符合 schema；中文撰写。"""
 
 
 def research_with_llm(
@@ -182,7 +206,7 @@ def research_with_llm(
         prompt=_build_prompt(base, bars_table),
         response_schema=_RESEARCH_SCHEMA,
         temperature=0.35,
-        max_output_tokens=8192,
+        max_output_tokens=16384,
         model=strat.llm_model or _LLM_MODEL,
     )
     usage = pop_usage(llm)

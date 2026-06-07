@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import os
+import re
 
 import requests
 
@@ -110,7 +112,6 @@ def push_wechat_file(file_path: str) -> bool:
 
     # 从 webhook URL 提取 key
     # URL 格式: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=XXXXX
-    import re
     match = re.search(r"key=([^&]+)", WECHAT_PUSH_WEBHOOK)
     if not match:
         logger.warning("无法从 webhook URL 提取 key")

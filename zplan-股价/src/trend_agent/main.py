@@ -30,6 +30,7 @@ def run_trend_agent(
     snapshot: bool = False,
     financial: bool = False,
     enrich_daily: bool = False,
+    chip: bool = False,
     catchup_panel: bool = False,
     catchup_workers: int | None = None,
     market: str = "a",
@@ -39,6 +40,7 @@ def run_trend_agent(
     a1_stats: dict | None = None
     snapshot_stats: dict | None = None
     financial_stats: dict | None = None
+    chip_stats: dict | None = None
     enrich_rows = 0
     inc_stats: dict | None = None
     catchup_stats: dict | None = None
@@ -102,6 +104,10 @@ def run_trend_agent(
         enrich_rows = -1
     if snapshot:
         snapshot_stats = run_daily_snapshot_update(limit=limit)
+    if chip:
+        from zplan_shared.etl_chip import run_daily_chip_update
+
+        chip_stats = run_daily_chip_update(limit=limit)
     if financial:
         financial_stats = run_financial_indicators_update(limit=limit)
     return {
@@ -124,6 +130,7 @@ def run_trend_agent(
         "catchup_panel_stats": catchup_stats,
         "snapshot_stats": snapshot_stats,
         "financial_stats": financial_stats,
+        "chip_stats": chip_stats,
         "enrich_daily": enrich_daily,
     }
 
@@ -186,6 +193,11 @@ def main() -> None:
         help="回填涨跌幅/振幅等衍生量价字段",
     )
     parser.add_argument(
+        "--chip",
+        action="store_true",
+        help="Phase CYQ：筹码峰日频数据（东方财富，多进程）",
+    )
+    parser.add_argument(
         "--catch-up-panel",
         action="store_true",
         help="仅补齐缺最新交易日截面的股票（选股 init-rule 前推荐）",
@@ -211,6 +223,7 @@ def main() -> None:
         snapshot=args.snapshot,
         financial=args.financial,
         enrich_daily=args.enrich_daily,
+        chip=args.chip,
         catchup_panel=args.catch_up_panel,
         catchup_workers=args.workers,
         market=args.market,
