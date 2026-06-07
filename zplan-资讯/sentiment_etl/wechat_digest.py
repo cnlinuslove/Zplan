@@ -225,7 +225,24 @@ def _northbound_fact(df: pd.DataFrame | None) -> str | None:
     pname, last = primary
     d = _fmt_trade_date(last.get("as_of_utc"))
     val = _fmt_num(last.get("metric_value"), digits=2) + " 亿元"
-    return f"北向资金（数据日 {d}）{pname} {val}"
+
+    # 数据陈旧告警：北向资金 API 关键字段可能已停更
+    stale_note = ""
+    try:
+        from datetime import datetime, timezone
+
+        ts = pd.Timestamp(last.get("as_of_utc"))
+        if ts.tzinfo is None:
+            ts = ts.tz_localize(timezone.utc)
+        age = (datetime.now(timezone.utc) - ts.to_pydatetime()).days
+        if age > 5:
+            stale_note = f" ⚠️ 数据已过期 {age} 天"
+        elif age > 2:
+            stale_note = f" ⚠️ 数据延迟 {age} 天"
+    except Exception:
+        pass
+
+    return f"北向资金（数据日 {d}）{pname} {val}{stale_note}"
 
 
 def _margin_fact(df: pd.DataFrame | None) -> str | None:

@@ -1,6 +1,7 @@
 """微信 / 企业微信：用户一句话 → 选股打分回复。"""
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
@@ -8,6 +9,8 @@ from typing import Any
 from zplan_shared.llm.gemini import gemini_available
 from zplan_shared.models import init_db
 from zplan_shared.pick_store import save_report_run
+
+logger = logging.getLogger(__name__)
 
 from pick_agent.concept_tags import attach_concepts, concepts_for_code
 from pick_agent.llm_research import _brief_review_one, format_llm_report_markdown, research_with_llm
@@ -103,8 +106,8 @@ def _format_linked_news_lines(report: dict[str, Any], *, max_items: int = 3) -> 
     n = total or fallback
     name = (report.get("meta") or {}).get("name") or "该股"
     if n <= 0:
-        return [f"相关资讯：近48h 库内暂无关联快讯（可问「{name} 最近新闻」）"]
-    lines = [f"相关资讯（48h {n} 条）"]
+        return [f"📰 近48h 库内暂无关联快讯（可问「{name} 最近新闻」）"]
+    lines = [f"📰 相关资讯（48h {n} 条）"]
     shown = 0
     for item in items[:max_items]:
         title = " ".join(str(item.get("title") or "").split())
@@ -112,13 +115,102 @@ def _format_linked_news_lines(report: dict[str, Any], *, max_items: int = 3) -> 
             continue
         url = str(item.get("article_url") or "").strip()
         if url.startswith(("http://", "https://")):
-            lines.append(f"· [{title[:56]}]({url})")
+            # 企微文本消息：明文 URL 可自动识别为可点击链接
+            lines.append(f"· {title[:80]}")
+            lines.append(f"  {url}")
         else:
-            lines.append(f"· {title[:72]}")
+            lines.append(f"· {title[:80]}")
         shown += 1
     if shown == 0 and n > 0:
         lines.append(f"· 库内已关联 {n} 条，标题未载入（可问「{name} 最近新闻」）")
     return lines
+
+
+def _synthesize_verdict(
+    report: dict[str, Any],
+    llm_brief: dict[str, Any] | None,
+) -> tuple[str, str]:
+    """综合判断 → (verdict_label, verdict_emoji)。
+
+    返回: ("看多", "📈") / ("看空", "📉") / ("观望", "📊")
+    """
+    advice = report["投资建议"]
+    m4 = report["modules"]["4_股价分析"]
+    tech_verdict = m4.get("技术面结论", "中性")  # 偏多/中性/偏空
+    recommendation = advice.get("操作建议", "观望")  # 强烈关注/关注/观望/谨慎/回避
+    rule_score = advice.get("综合推荐分", 50)
+
+    # LLM 建议
+    llm_rec = None
+    if llm_brief:
+        brief = llm_brief.get("llm_brief") or {}
+        llm_rec = brief.get("recommendation")
+    elif report.get("llm"):
+        llm_rec = report["llm"].get("recommendation")
+
+    # 多方信号权重
+    bull_score = 0
+    bear_score = 0
+
+    # 技术面结论
+    if tech_verdict == "偏多":
+        bull_score += 3
+    elif tech_verdict == "偏空":
+        bear_score += 3
+    # 中性不加分
+
+    # 操作建议（权重最高）
+    if recommendation == "强烈关注":
+        bull_score += 3
+    elif recommendation == "关注":
+        bull_score += 1  # 关注 = 轻仓试探，不是强烈看多
+    elif recommendation == "谨慎":
+        bear_score += 2
+    elif recommendation == "回避":
+        bear_score += 3
+
+    # 规则分
+    if rule_score is not None:
+        if rule_score >= 70:
+            bull_score += 2
+        elif rule_score >= 60:
+            bull_score += 1
+        elif rule_score <= 35:
+            bear_score += 2
+        elif rule_score <= 45:
+            bear_score += 1
+
+    # LLM 建议
+    if llm_rec:
+        if llm_rec == "强烈关注":
+            bull_score += 1
+        elif llm_rec == "关注":
+            bull_score += 0  # LLM 关注不额外加分
+        elif llm_rec in ("谨慎",):
+            bear_score += 1
+        elif llm_rec == "回避":
+            bear_score += 2
+
+    # ── 从信号文本中检测关键矛盾信号 ──
+    sig_texts = m4.get("关键信号") or []
+    for s in sig_texts:
+        s = str(s)
+        if any(kw in s for kw in ("空头排列", "死叉", "跌破", "破位")):
+            bear_score += 1
+        if any(kw in s for kw in ("多头排列", "金叉", "突破", "站上")):
+            bull_score += 0.5  # 单信号权重低于结论
+
+    # 综合判定
+    if bull_score >= bear_score + 2:
+        return "看多", "📈"
+    elif bear_score >= bull_score + 2:
+        return "看空", "📉"
+    elif bull_score > bear_score:
+        return "偏多", "📊"  # 略偏多但不确定
+    elif bear_score > bull_score:
+        return "偏空", "📊"
+    else:
+        return "观望", "📊"
 
 
 def format_wechat_pick_text(
@@ -126,6 +218,7 @@ def format_wechat_pick_text(
     *,
     llm_brief: dict[str, Any] | None = None,
     run_id: int | None = None,
+    similar_patterns: dict[str, Any] | None = None,
 ) -> str:
     meta = report["meta"]
     advice = report["投资建议"]
@@ -134,29 +227,73 @@ def format_wechat_pick_text(
     name = meta.get("name") or meta["ts_code"]
     code = meta["ts_code"]
 
-    lines = [
-        f"【{name} {code}】",
-        f"数据截止 {report.get('as_of', '—')}",
-    ]
+    verdict_label, verdict_emoji = _synthesize_verdict(report, llm_brief)
     rule_s = advice.get("综合推荐分")
-    lines.append(f"规则综合分 {rule_s} | 技术面 {m4.get('技术得分')} ({m4.get('技术面结论')})")
+    tech_score = m4.get("技术得分")
+    tech_v = m4.get("技术面结论", "")
 
+    # LLM 分 + 建议
+    llm_score = None
+    llm_rec_text = ""
     if llm_brief:
-        llm_s = llm_brief.get("llm_composite_score")
-        if llm_s is not None:
-            lines.append(f"LLM综合分 {llm_s}")
-        trend = (llm_brief.get("llm_brief") or {}).get("trend")
-        rec = (llm_brief.get("llm_brief") or {}).get("recommendation")
-        if trend:
-            lines.append(f"简评 {trend}")
-        if rec:
-            lines.append(f"LLM建议 {rec}")
+        llm_score = llm_brief.get("llm_composite_score")
+        brief = llm_brief.get("llm_brief") or {}
+        llm_rec_text = brief.get("recommendation", "")
     elif report.get("llm"):
         llm = report["llm"]
-        lines.append(f"LLM综合分 {advice.get('LLM综合分', llm.get('composite_score'))}")
-        if llm.get("recommendation"):
-            lines.append(f"LLM建议 {llm['recommendation']}")
+        llm_score = advice.get("LLM综合分") or llm.get("composite_score")
+        llm_rec_text = llm.get("recommendation", "")
 
+    rec_text = advice.get("操作建议", "")
+
+    # 结论行 + 详细分数
+    lines = [
+        f"{verdict_emoji} 【{name} {code}】 综合研判：{verdict_label}",
+        f"数据截止 {report.get('as_of', '—')}",
+        f"规则综合分 {rule_s} | 技术面 {tech_score} ({tech_v})",
+    ]
+    if llm_score is not None:
+        lines.append(f"LLM综合分 {llm_score} | LLM建议 {llm_rec_text}")
+
+    # ── LLM 分析详情 ──
+    if llm_brief:
+        brief = llm_brief.get("llm_brief") or {}
+        trend = brief.get("trend")
+        vs_rule = brief.get("vs_rule_engine")
+        if trend:
+            lines.append(f"📊 {trend}")
+        if vs_rule:
+            lines.append(f"💡 {vs_rule}")
+    elif report.get("llm"):
+        llm = report["llm"]
+        price_analysis = advice.get("LLM股价分析") or llm.get("price_trend_analysis", "")
+        if price_analysis:
+            lines.append(f"📊 走势 {price_analysis[:200]}")
+        tech_analysis = advice.get("LLM技术面分析") or llm.get("technical_analysis", "")
+        if tech_analysis:
+            lines.append(f"🔧 技术 {tech_analysis[:120]}")
+        fin_analysis = advice.get("LLM财务分析") or llm.get("financial_analysis", "")
+        if fin_analysis:
+            lines.append(f"💰 财务 {fin_analysis[:100]}")
+        news_analysis = llm.get("news_analysis", "")
+        if news_analysis:
+            lines.append(f"📰 舆情 {news_analysis[:100]}")
+        summary = advice.get("总结") or advice.get("investment_summary")
+        if not price_analysis and summary:
+            lines.append(f"📋 {summary[:150]}")
+        risks = (report.get("modules", {}).get("7_公司风险", {}).get("风险要点")
+                 or llm.get("risks") or [])
+        if risks:
+            lines.append(f"⚠️ 风险 {'；'.join(str(r)[:50] for r in risks[:3])}")
+        opportunities = llm.get("opportunities") or []
+        if opportunities:
+            lines.append(f"🌟 机遇 {'；'.join(str(o)[:50] for o in opportunities[:2])}")
+    else:
+        summary = advice.get("总结")
+        if summary:
+            lines.append(f"📊 {summary[:120]}")
+
+    # ── 基本面速览 ──
     ret20 = snap.get("ret_20d")
     if ret20 is not None:
         lines.append(f"20日涨跌 {ret20:+.2f}%")
@@ -164,14 +301,72 @@ def format_wechat_pick_text(
     if concepts:
         lines.append(f"题材 {'、'.join(concepts[:4])}")
 
-    lines.append(f"操作建议 {advice.get('操作建议')}")
+    # ── 操作建议：看空时不展示买入价 ──
+    lines.append(f"操作建议 {rec_text}")
     buy, tgt, stop = advice.get("建议买入价"), advice.get("目标价"), advice.get("止损参考")
-    if any(x is not None for x in (buy, tgt, stop)):
-        lines.append(f"买/目标/止 {buy} / {tgt} / {stop}")
+    if verdict_label == "看空":
+        # 看空不做买入建议，仅展示止损参考
+        if stop is not None and rec_text in ("谨慎", "回避"):
+            lines.append(f"⚠ 当前偏空，不建议买入；若已持有，止损参考 ¥{stop:.2f}")
+        elif stop is not None:
+            lines.append(f"止损参考 ¥{stop:.2f}（跌破离场）")
+    elif verdict_label == "看多":
+        if any(x is not None for x in (buy, tgt, stop)):
+            parts = []
+            if buy is not None:
+                parts.append(f"买 ¥{buy:.2f}")
+            if tgt is not None:
+                parts.append(f"目标 ¥{tgt:.2f}")
+            if stop is not None:
+                parts.append(f"止损 ¥{stop:.2f}")
+            lines.append(" / ".join(parts))
+    else:
+        # 观望状态展示区间
+        if any(x is not None for x in (buy, tgt, stop)):
+            parts = []
+            if buy is not None:
+                parts.append(f"回调至 ¥{buy:.2f} 可关注")
+            if stop is not None:
+                parts.append(f"止损 ¥{stop:.2f}")
+            lines.append(" / ".join(parts))
 
     sig = m4.get("关键信号") or []
     if sig:
         lines.append("信号 " + "；".join(str(s) for s in sig[:3]))
+
+    # ── 相似历史形态详情 ──
+    if similar_patterns and similar_patterns.get("matches"):
+        matches = similar_patterns["matches"]
+        summary = similar_patterns.get("summary") or {}
+        total = summary.get("total", 0)
+        win = summary.get("win_count", 0)
+        avg_ret = summary.get("avg_return_20d", 0)
+        sim_verdict = summary.get("verdict", "")
+        if total > 0:
+            sim_icon = {"偏多": "📈", "偏空": "📉"}.get(sim_verdict, "📊")
+            lines.append(
+                f"🔍 历史相似形态 {win}/{total} 上涨 · 20日平均 {avg_ret:+.1f}% {sim_icon}"
+            )
+            # 列出每只匹配股票，可进一步分析
+            for m in matches:
+                m_name = m.get("name", m["ts_code"])
+                m_code = m["ts_code"]
+                m_date = m["match_date"][5:] if len(m.get("match_date", "")) >= 10 else m.get("match_date", "")
+                m_fwd = m.get("forward_return_20d", 0) or 0
+                m_sim = m.get("similarity", 0)
+                m_icon = "✅" if m_fwd > 0 else "❌"
+                lines.append(
+                    f"  {m_icon} {m_name}({m_code}) {m_date} "
+                    f"相似{m_sim:.0%} → 20日后 {m_fwd:+.1f}%"
+                )
+            lines.append("  💡 发送「选股 代码」可查看匹配股详情")
+
+    # ── 走势应对 ──
+    scenarios = advice.get("走势应对") or []
+    if scenarios:
+        lines.append("📋 走势应对")
+        for s in scenarios[:3]:
+            lines.append(f"  {str(s)[:100]}")
 
     lines.extend(_format_linked_news_lines(report))
 
@@ -180,6 +375,7 @@ def format_wechat_pick_text(
 
     lines.append("—")
     lines.append("指令：选股 名称 | 筛选 题材 | 帮助")
+    lines.append("📄 完整 PDF 报告已生成，含走势图+指标+分析")
     return "\n".join(lines)
 
 
@@ -194,11 +390,9 @@ def run_pick_for_symbol(
     init_db()
     strat = load_strategy()
     want_llm = _use_llm_for_wechat() if use_llm is None else bool(use_llm)
-    full_research = os.getenv("PICK_WECHAT_FULL_RESEARCH", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    # 深度研报默认开启；设 PICK_WECHAT_FULL_RESEARCH=false/0/no/off 可回退简评
+    _fr_raw = os.getenv("PICK_WECHAT_FULL_RESEARCH", "").strip().lower()
+    full_research = _fr_raw not in ("0", "false", "no", "off")
 
     code = resolve_symbol(query)
     llm_row: dict[str, Any] | None = None
@@ -229,10 +423,64 @@ def run_pick_for_symbol(
             llm_model=strat.llm_model,
         )
 
+    # ── 走势可视化 + PDF 报告（在格式化文本前完成）──
+    chart_path: str | None = None
+    pdf_path: str | None = None
+    similar_patterns: dict[str, Any] | None = None
+    price_levels: dict[str, float | None] = {}
+    risk_flags: list[str] = []
+    sig_list: list[str] = []
+    try:
+        from zplan_shared.chart_viz import plot_stock_chart
+        from zplan_shared.features import suggested_price_levels
+        from zplan_shared.market import get_bars as _get_bars
+
+        bars = _get_bars(code)
+        price_levels = suggested_price_levels(bars)
+
+        # 提取风险标签和信号
+        m4 = report["modules"]["4_股价分析"]
+        advice = report["投资建议"]
+        sig_list = list(m4.get("关键信号") or [])
+        if llm_row:
+            brief = llm_row.get("llm_brief") or {}
+            risk_flags = brief.get("risk_flags") or []
+        elif report.get("llm"):
+            risk_flags = (report.get("modules", {}).get("7_公司风险", {}).get("风险要点") or [])[:3]
+
+        # 走势明确时搜索相似历史形态（使用综合研判结论）
+        synth_verdict, _ = _synthesize_verdict(report, llm_row)
+        if synth_verdict in ("看多", "看空", "偏多", "偏空"):
+            from zplan_shared.pattern_similarity import find_similar_patterns
+            similar_patterns = find_similar_patterns(code, as_of=report.get("as_of"))
+
+        chart_path = plot_stock_chart(
+            code,
+            price_levels=price_levels,
+            risk_flags=risk_flags if risk_flags else None,
+            signals=sig_list if sig_list else None,
+            similar_patterns=similar_patterns,
+        )
+
+        # ── 生成 PDF 报告 ──
+        from zplan_shared.report_pdf import generate_pdf_report
+        pdf_path = generate_pdf_report(
+            code,
+            report=report,
+            llm_brief=llm_row,
+            chart_path=chart_path,
+            price_levels=price_levels,
+            similar_patterns=similar_patterns,
+            risk_flags=risk_flags if risk_flags else None,
+        )
+    except Exception:
+        logger.warning("走势图/PDF 生成失败", exc_info=True)
+
     text = format_wechat_pick_text(
         report,
         llm_brief=llm_row,
         run_id=run_id,
+        similar_patterns=similar_patterns,
     )
 
     return {
@@ -243,6 +491,9 @@ def run_pick_for_symbol(
         "reply_text": text,
         "report": report,
         "run_id": run_id,
+        "chart_path": chart_path,
+        "pdf_path": pdf_path,
+        "similar_patterns": similar_patterns,
     }
 
 

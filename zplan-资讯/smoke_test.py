@@ -8,6 +8,7 @@ from pathlib import Path
 
 # 烟测：轻量模式（须在业务 import 之前设置）
 os.environ.setdefault("SMOKE_TEST", "1")
+os.environ.setdefault("DEEPSEEK_MIN_SECONDS_BETWEEN_CALLS", "0")
 os.environ.setdefault("GEMINI_MIN_SECONDS_BETWEEN_TOPICS", "0")
 os.environ.setdefault("GEMINI_MIN_SECONDS_BETWEEN_CALLS", "0")
 os.environ.setdefault("LLM_SUMMARY_ENABLED", "false")

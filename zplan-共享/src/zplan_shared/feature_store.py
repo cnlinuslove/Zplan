@@ -13,16 +13,19 @@ from zplan_shared.models import DailyFeature, SessionLocal, init_db
 _FEATURE_COLS = ("ts_code", "trade_date", *SNAPSHOT_FLOAT_KEYS, *SNAPSHOT_FLAG_KEYS)
 
 
-def get_features_panel(as_of: str | date | None = None) -> pd.DataFrame:
+def get_features_panel(as_of: str | date | None = None, *, market: str = "a") -> pd.DataFrame:
     """指定交易日全市场技术指标截面；无数据时返回空 DataFrame。"""
     init_db()
-    as_of_d = _parse_date(as_of) if as_of is not None else latest_trade_date()
+    as_of_d = _parse_date(as_of) if as_of is not None else latest_trade_date(market=market)
     if as_of_d is None:
         return pd.DataFrame()
 
     with SessionLocal() as session:
         rows = session.execute(
-            select(DailyFeature).where(DailyFeature.trade_date == as_of_d)
+            select(DailyFeature).where(
+                DailyFeature.trade_date == as_of_d,
+                DailyFeature.market == market,
+            )
         ).scalars().all()
 
     if not rows:
@@ -32,13 +35,13 @@ def get_features_panel(as_of: str | date | None = None) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def get_stock_features(ts_code: str, as_of: str | date | None = None) -> dict:
+def get_stock_features(ts_code: str, as_of: str | date | None = None, *, market: str = "a") -> dict:
     """单票指标快照字典。"""
     init_db()
     from zplan_shared.market import resolve_ts_code
 
     code = resolve_ts_code(ts_code)
-    as_of_d = _parse_date(as_of) if as_of is not None else latest_trade_date()
+    as_of_d = _parse_date(as_of) if as_of is not None else latest_trade_date(market=market)
     if as_of_d is None:
         return {}
 
@@ -47,6 +50,7 @@ def get_stock_features(ts_code: str, as_of: str | date | None = None) -> dict:
             select(DailyFeature).where(
                 DailyFeature.ts_code == code,
                 DailyFeature.trade_date == as_of_d,
+                DailyFeature.market == market,
             )
         ).scalar_one_or_none()
 

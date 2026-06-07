@@ -13,7 +13,8 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 import config as app_config
-from wechat_interact import handle_inbound_text
+from chat_session import session_active
+from wechat_interact import SESSION_REQUIRED_TEXT, handle_inbound_text
 from wework_client import send_text_message, wework_callback_configured
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,11 @@ def parse_inbound_xml(xml_text: str) -> dict[str, str] | None:
     }
 
 
+def _has_mention(content: str) -> bool:
+    """检测消息是否 @了机器人（企微格式：@BotName …）。"""
+    return bool(re.match(r"^@\S+", (content or "").strip()))
+
+
 def _reply_target(parsed: dict[str, str]) -> dict[str, str]:
     chat_id = parsed.get("chat_id") or ""
     if chat_id:
@@ -59,6 +65,14 @@ def _reply_target(parsed: dict[str, str]) -> dict[str, str]:
 def _process_and_send(parsed: dict[str, str]) -> None:
     try:
         content = parsed["content"]
+        chat_id = parsed.get("chat_id") or None
+        mentioned = _has_mention(content)
+
+        # 非 @ 消息且无活跃会话 → 快速回复引导，不执行完整管线
+        if not mentioned and chat_id and not session_active(chat_id):
+            send_text_message(SESSION_REQUIRED_TEXT, **_reply_target(parsed))
+            return
+
         try:
             from pick_wechat import try_handle_pick
 
@@ -66,7 +80,13 @@ def _process_and_send(parsed: dict[str, str]) -> None:
                 send_text_message(_PICK_THINKING, **_reply_target(parsed))
         except Exception:
             pass
-        result = handle_inbound_text(content)
+        result = handle_inbound_text(
+            content,
+            user_id=parsed.get("from_user") or None,
+            channel="wework_app",
+            chat_id=chat_id,
+            mentioned=mentioned,
+        )
         text = str(result.get("reply_text") or result.get("reply_markdown") or "（无回复内容）")
         send_text_message(text, **_reply_target(parsed))
     except Exception as exc:  # noqa: BLE001
@@ -110,7 +130,16 @@ def handle_wework_callback_post(
     if not parsed:
         return b"success"
 
+    content = parsed.get("content", "")
+    chat_id = parsed.get("chat_id") or None
+    mentioned = _has_mention(content)
     target = _reply_target(parsed)
+
+    # 非 @ 消息且无活跃会话 → 快速回复引导，不发送「正在检索…」也不走完整管线
+    if not mentioned and chat_id and not session_active(chat_id):
+        send_text_message(SESSION_REQUIRED_TEXT, **target)
+        return b"success"
+
     if target.get("touser") or target.get("chatid"):
         send_text_message(_THINKING, **target)
 

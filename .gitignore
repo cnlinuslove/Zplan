@@ -31,6 +31,8 @@ build/
 
 # 运行日志
 logs/*.log
+logs/*.lock
+logs/*.err
 !logs/.gitkeep
 
 # macOS / IDE（各 Agent 内 .vscode 可提交 settings，此处不全局忽略）

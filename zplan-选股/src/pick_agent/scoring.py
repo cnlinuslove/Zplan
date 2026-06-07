@@ -86,6 +86,16 @@ def intraday_adjust(tech: TechnicalSnapshot, ctx: dict[str, Any], strategy: Pick
     return adj
 
 
+def cross_market_score_from_pair(ts_code: str) -> tuple[float, dict]:
+    """跨市场 Alpha 分 → 百分制，供 composite_score 使用。"""
+    try:
+        from zplan_shared.cross_market import cross_market_score as cm_score
+        raw, detail = cm_score(ts_code)
+        return raw * 10, detail
+    except Exception:
+        return 50.0, {"reason": "unavailable"}
+
+
 def composite_score(
     *,
     tech: TechnicalSnapshot,
@@ -94,17 +104,32 @@ def composite_score(
     industry_sc: float | None,
     intraday_adj: float,
     strategy: PickStrategy,
+    ts_code: str | None = None,
 ) -> float:
     w = strategy.weights
     tech_s = min(100.0, tech.score + intraday_adj)
     ind_s = industry_sc if industry_sc is not None else 50.0
     fin_s = fin_score if fin_score is not None else 50.0
-    total_w = w["technical"] + w["financial"] + w["news"] + w["industry_relative"]
+
+    # 跨市场 Alpha 加成
+    cm_s = 50.0
+    cm_w = w.get("cross_market", 0)
+    if ts_code and cm_w > 0:
+        cm_s, _ = cross_market_score_from_pair(ts_code)
+
+    total_w = (
+        w.get("technical", 0.65)
+        + w.get("financial", 0.15)
+        + w.get("news", 0.10)
+        + w.get("industry_relative", 0.10)
+        + cm_w
+    )
     composite = (
-        w["technical"] * tech_s
-        + w["financial"] * fin_s
-        + w["news"] * news_sc
-        + w["industry_relative"] * ind_s
+        w.get("technical", 0.65) * tech_s
+        + w.get("financial", 0.15) * fin_s
+        + w.get("news", 0.10) * news_sc
+        + w.get("industry_relative", 0.10) * ind_s
+        + cm_w * cm_s
     ) / total_w
     return round(max(0.0, min(100.0, composite)), 1)
 

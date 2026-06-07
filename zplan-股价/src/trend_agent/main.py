@@ -32,8 +32,9 @@ def run_trend_agent(
     enrich_daily: bool = False,
     catchup_panel: bool = False,
     catchup_workers: int | None = None,
+    market: str = "a",
 ) -> dict:
-    """股价 Agent：同步 A 股日线到共享库 ``daily_prices``。"""
+    """股价 Agent：同步 A 股 / 港股日线到共享库 ``daily_prices``。"""
     removed = 0
     a1_stats: dict | None = None
     snapshot_stats: dict | None = None
@@ -42,6 +43,30 @@ def run_trend_agent(
     inc_stats: dict | None = None
     catchup_stats: dict | None = None
     post_catchup_stats: dict | None = None
+
+    if market == "hk":
+        # ── 港股分支 ──
+        from zplan_shared.etl_akshare_hk import run_hk_a1_update, run_hk_incremental_update
+
+        if a1:
+            a1_stats = run_hk_a1_update(limit=limit, skip_intraday=skip_intraday)
+        else:
+            inc_stats = run_hk_incremental_update(limit=limit)
+        if snapshot:
+            from zplan_shared.etl_snapshot_hk import run_hk_snapshot_update
+            snapshot_stats = run_hk_snapshot_update(limit=limit)
+        return {
+            "ok": True,
+            "agent": "trend",
+            "market": "hk",
+            "zplan_root": str(ZPLAN_ROOT),
+            "limit": limit,
+            "a1_stats": a1_stats,
+            "incremental_stats": inc_stats,
+            "snapshot_stats": snapshot_stats,
+        }
+
+    # ── A 股分支（原有逻辑）──
     if catchup_panel:
         catchup_stats = run_catchup_panel_update(limit=limit, workers=catchup_workers)
     elif a1:
@@ -82,6 +107,7 @@ def run_trend_agent(
     return {
         "ok": True,
         "agent": "trend",
+        "market": "a",
         "zplan_root": str(ZPLAN_ROOT),
         "limit": limit,
         "init": init,
@@ -103,11 +129,18 @@ def run_trend_agent(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Z-Plan 股价 Agent")
+    parser = argparse.ArgumentParser(description="Z-Plan 股价 Agent（A 股 + 港股）")
+    parser.add_argument(
+        "--market",
+        type=str,
+        default="a",
+        choices=("a", "hk"),
+        help="目标市场：a=A 股（默认），hk=港股",
+    )
     parser.add_argument(
         "--a1",
         action="store_true",
-        help="Phase A.1：全市场日线(统一AkShare源) + 近两周分时",
+        help="Phase A.1：全市场日线 + 近两周分时",
     )
     parser.add_argument(
         "--init",
@@ -180,6 +213,7 @@ def main() -> None:
         enrich_daily=args.enrich_daily,
         catchup_panel=args.catch_up_panel,
         catchup_workers=args.workers,
+        market=args.market,
     )
     logger.info("完成: %s", result)
 

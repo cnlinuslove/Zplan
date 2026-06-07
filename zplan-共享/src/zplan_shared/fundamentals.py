@@ -28,15 +28,20 @@ def get_snapshot(
     as_of: str | date | None = None,
     *,
     fields: Iterable[str] | None = None,
+    market: str = "a",
 ) -> pd.DataFrame:
     """指定交易日全市场估值截面；``as_of`` 默认库内 snapshot 最新日。"""
     init_db()
     as_of_d = _parse_date(as_of)
     if as_of_d is None:
         with SessionLocal() as session:
-            as_of_d = session.execute(select(func.max(DailySnapshot.trade_date))).scalar_one_or_none()
+            as_of_d = session.execute(
+                select(func.max(DailySnapshot.trade_date)).where(
+                    DailySnapshot.market == market
+                )
+            ).scalar_one_or_none()
         if as_of_d is None:
-            as_of_d = latest_trade_date()
+            as_of_d = latest_trade_date(market=market)
     if as_of_d is None:
         return pd.DataFrame()
 
@@ -47,7 +52,10 @@ def get_snapshot(
 
     with SessionLocal() as session:
         rows = session.execute(
-            select(DailySnapshot).where(DailySnapshot.trade_date == as_of_d)
+            select(DailySnapshot).where(
+                DailySnapshot.trade_date == as_of_d,
+                DailySnapshot.market == market,
+            )
         ).scalars().all()
 
     records: list[dict[str, Any]] = []
@@ -56,24 +64,26 @@ def get_snapshot(
     return pd.DataFrame(records)
 
 
-def get_financials(ts_code: str, *, limit: int = 8) -> pd.DataFrame:
+def get_financials(ts_code: str, *, limit: int = 8, market: str | None = None) -> pd.DataFrame:
     """单票财报指标，按报告期倒序。"""
     init_db()
     code = ts_code.strip()
     if "." in code:
         code = code.split(".", 1)[0]
+    if market is None:
+        from zplan_shared.market import _market_from_code
+        market = _market_from_code(ts_code)
 
     with SessionLocal() as session:
-        rows = (
-            session.execute(
-                select(FinancialIndicator)
-                .where(FinancialIndicator.ts_code == code)
-                .order_by(FinancialIndicator.report_date.desc())
-                .limit(limit)
-            )
-            .scalars()
-            .all()
+        stmt = (
+            select(FinancialIndicator)
+            .where(FinancialIndicator.ts_code == code)
+            .order_by(FinancialIndicator.report_date.desc())
+            .limit(limit)
         )
+        if market:
+            stmt = stmt.where(FinancialIndicator.market == market)
+        rows = session.execute(stmt).scalars().all()
 
     if not rows:
         return pd.DataFrame(

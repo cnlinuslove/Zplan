@@ -1,0 +1,83 @@
+{
+  "version": "v3_reg",
+  "created_at": "2026-06-05T16:25:38.257068Z",
+  "model_file": "v3_reg_approach_a.lgb",
+  "model_type": "LightGBM_regressor",
+  "approach": "A_regression",
+  "target": "forward_return",
+  "num_features": 47,
+  "n_train": 25039,
+  "n_val": 37646,
+  "n_test": 28008,
+  "training_range": "train~2024-06, val~2025-01, test~2025-08 (前瞻)",
+  "ranking_eval": {
+    "10": {
+      "spearman_r": 0.673,
+      "spearman_p": 0.0,
+      "ic": 0.6015,
+      "top_return": 16.37,
+      "bottom_return": -12.445,
+      "all_mean": 3.7502,
+      "spread": 28.815,
+      "hit_rate": 1.0,
+      "bin_returns": [
+        16.3176,
+        11.9272,
+        1.1751,
+        -2.88,
+        -7.7871
+      ]
+    },
+    "20": {
+      "spearman_r": 0.673,
+      "spearman_p": 0.0,
+      "ic": 0.6015,
+      "top_return": 21.7385,
+      "bottom_return": -15.215,
+      "all_mean": 3.7502,
+      "spread": 36.9535,
+      "hit_rate": 1.0,
+      "bin_returns": [
+        16.3176,
+        11.9272,
+        1.1751,
+        -2.88,
+        -7.7871
+      ]
+    },
+    "50": {
+      "spearman_r": 0.673,
+      "spearman_p": 0.0,
+      "ic": 0.6015,
+      "top_return": 20.829,
+      "bottom_return": -11.4908,
+      "all_mean": 3.7502,
+      "spread": 32.3198,
+      "hit_rate": 1.0,
+      "bin_returns": [
+        16.3176,
+        11.9272,
+        1.1751,
+        -2.88,
+        -7.7871
+      ]
+    },
+    "100": {
+      "spearman_r": 0.673,
+      "spearman_p": 0.0,
+      "ic": 0.6015,
+      "top_return": 20.371,
+      "bottom_return": -12.7719,
+      "all_mean": 3.7502,
+      "spread": 33.1429,
+      "hit_rate": 1.0,
+      "bin_returns": [
+        16.3176,
+        11.9272,
+        1.1751,
+        -2.88,
+        -7.7871
+      ]
+    }
+  }
+}

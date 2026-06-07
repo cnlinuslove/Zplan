@@ -72,22 +72,59 @@ X_FETCH_USERNAMES = os.getenv("X_FETCH_USERNAMES", "false").lower() == "true"
 X_RATE_LIMIT_SLEEP_SECONDS = int(os.getenv("X_RATE_LIMIT_SLEEP_SECONDS", "60"))
 X_FAILOVER_TO_PLACEHOLDER = os.getenv("X_FAILOVER_TO_PLACEHOLDER", "true").lower() == "true"
 
-# LLM summary (Gemini)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+# LLM (DeepSeek，OpenAI 兼容 API)
+# 优先级：DEEPSEEK_API_KEY > .claude/settings.local.json 中的 ANTHROPIC_API_KEY > GEMINI_API_KEY
+def _resolve_deepseek_api_key() -> str:
+    key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if key:
+        return key
+    # 尝试从 Claude Code 本地配置读取（DeepSeek 平台同一 Key 可用于标准 API 与 Anthropic 兼容端点）
+    try:
+        import json as _json
+        settings_local = Path.home() / ".claude" / "settings.local.json"
+        if settings_local.exists():
+            data = _json.loads(settings_local.read_text(encoding="utf-8"))
+            key = (data.get("env", {}).get("ANTHROPIC_API_KEY") or data.get("ANTHROPIC_API_KEY") or "").strip()
+            if key:
+                return key
+    except Exception:
+        pass
+    # 最后回退到旧 Gemini Key（过渡期）
+    return os.getenv("GEMINI_API_KEY", "").strip()
+
+
+DEEPSEEK_API_KEY = _resolve_deepseek_api_key()
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_API_BASE_URL = os.getenv(
+    "DEEPSEEK_API_BASE_URL", "https://api.deepseek.com/v1"
+)
+DEEPSEEK_TIMEOUT_SECONDS = int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "90"))
+DEEPSEEK_MAX_OUTPUT_TOKENS = int(os.getenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "8192"))
+DEEPSEEK_MIN_SECONDS_BETWEEN_CALLS = float(os.getenv("DEEPSEEK_MIN_SECONDS_BETWEEN_CALLS", "1.5"))
+
+# 向后兼容：Gemini 配置变量仍可读（deploy 过渡期），但底层已切换为 DeepSeek
+GEMINI_API_KEY = DEEPSEEK_API_KEY
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", DEEPSEEK_MODEL)
 GEMINI_API_BASE_URL = os.getenv(
     "GEMINI_API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
 )
-GEMINI_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "60"))
+GEMINI_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", str(DEEPSEEK_TIMEOUT_SECONDS)))
 LLM_SUMMARY_ENABLED = os.getenv("LLM_SUMMARY_ENABLED", "true").lower() == "true"
 GEMINI_SUMMARY_MAX_ITEMS = int(os.getenv("GEMINI_SUMMARY_MAX_ITEMS", "15"))
 GEMINI_SUMMARY_CHARS_PER_ITEM = int(os.getenv("GEMINI_SUMMARY_CHARS_PER_ITEM", "900"))
 GEMINI_MIN_SECONDS_BETWEEN_TOPICS = float(os.getenv("GEMINI_MIN_SECONDS_BETWEEN_TOPICS", "8"))
-GEMINI_MIN_SECONDS_BETWEEN_CALLS = float(os.getenv("GEMINI_MIN_SECONDS_BETWEEN_CALLS", "3"))
-GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
+GEMINI_MIN_SECONDS_BETWEEN_CALLS = float(
+    os.getenv("GEMINI_MIN_SECONDS_BETWEEN_CALLS", str(DEEPSEEK_MIN_SECONDS_BETWEEN_CALLS))
+)
+GEMINI_MAX_OUTPUT_TOKENS = int(
+    os.getenv("GEMINI_MAX_OUTPUT_TOKENS", str(DEEPSEEK_MAX_OUTPUT_TOKENS))
+)
 X_QUERY_EXCLUDE_SUFFIX = os.getenv("X_QUERY_EXCLUDE_SUFFIX", "").strip()
 
 # WeChat
+CHAT_HISTORY_ENABLED = os.getenv("CHAT_HISTORY_ENABLED", "true").lower() == "true"
+# 会话窗口：用户 @ 过 Zplan 后，多少分钟内同群消息无需再次 @（默认 120 分钟）
+CHAT_SESSION_TTL_MINUTES = int(os.getenv("CHAT_SESSION_TTL_MINUTES", "120"))
 WECHAT_PUSH_MODE = os.getenv("WECHAT_PUSH_MODE", "markdown")
 WECHAT_PUSH_DIGEST = os.getenv("WECHAT_PUSH_DIGEST", "true").lower() == "true"
 WECHAT_HTTP_TOKEN = os.getenv("WECHAT_HTTP_TOKEN", "").strip()
@@ -108,6 +145,8 @@ NEWSAPI_LANGUAGE = os.getenv("NEWSAPI_LANGUAGE", "en").strip()
 NEWSAPI_PAGE_SIZE = int(os.getenv("NEWSAPI_PAGE_SIZE", "30"))
 GOOGLE_RSS_KEYWORDS = os.getenv("GOOGLE_RSS_KEYWORDS", "Macroeconomy,Geopolitics,美联储,地缘冲突")
 GOOGLE_RSS_HL = os.getenv("GOOGLE_RSS_HL", "zh-CN")
+# Google News RSS 时间过滤：空=不过滤；值如 24h/7d/30d（官方支持 h/d/w/m 单位）
+GOOGLE_RSS_WHEN = os.getenv("GOOGLE_RSS_WHEN", "24h").strip() or None
 HTTP_USER_AGENT = os.getenv(
     "HTTP_USER_AGENT",
     "Mozilla/5.0 (compatible; zplan-sentiment-etl/1.0; +https://github.com/)",
@@ -121,6 +160,10 @@ SENTIMENT_INDEX_HIST_DAYS = int(os.getenv("SENTIMENT_INDEX_HIST_DAYS", "30"))
 SENTIMENT_NORTHBOUND_INTRADAY = os.getenv("SENTIMENT_NORTHBOUND_INTRADAY", "true").lower() == "true"
 SENTIMENT_WECHAT_PUSH = os.getenv("SENTIMENT_WECHAT_PUSH", "true").lower() == "true"
 SENTIMENT_WECHAT_SAMPLE_PER_SOURCE = int(os.getenv("SENTIMENT_WECHAT_SAMPLE_PER_SOURCE", "4"))
+# 数据陈旧阈值（交易日+周末容忍度内置）：各 factor_kind 最新 as_of_utc 超过此天数则告警
+SENTIMENT_STALE_DAYS_NORTHBOUND = int(os.getenv("SENTIMENT_STALE_DAYS_NORTHBOUND", "5"))
+SENTIMENT_STALE_DAYS_MARGIN = int(os.getenv("SENTIMENT_STALE_DAYS_MARGIN", "5"))
+SENTIMENT_STALE_DAYS_INDEX = int(os.getenv("SENTIMENT_STALE_DAYS_INDEX", "5"))
 # brief=用户可读简报；debug=全源 ETL 样例（运维）
 SENTIMENT_WECHAT_STYLE = os.getenv("SENTIMENT_WECHAT_STYLE", "brief").strip().lower()
 SENTIMENT_WECHAT_DIGEST_LLM = os.getenv("SENTIMENT_WECHAT_DIGEST_LLM", "true").lower() == "true"
@@ -128,3 +171,22 @@ INFO_QUERY_LIVE_FETCH = os.getenv("INFO_QUERY_LIVE_FETCH", "true").lower() == "t
 INFO_QUERY_LIVE_MAX_KEYWORDS = int(os.getenv("INFO_QUERY_LIVE_MAX_KEYWORDS", "3"))
 INFO_QUERY_MAX_SOURCES = int(os.getenv("INFO_QUERY_MAX_SOURCES", "5"))
 INFO_QUERY_SNIPPET_CHARS = int(os.getenv("INFO_QUERY_SNIPPET_CHARS", "320"))
+
+# ── 港股 (HKEX) 配置 ──────────────────────────────────────────────
+# 港股日线数据源（目前仅东财）
+HK_DAILY_PROVIDER = os.getenv("HK_DAILY_PROVIDER", "em").strip().lower()
+# 新标的港股日线回溯天数
+HK_DAILY_BOOTSTRAP_CALENDAR_DAYS = int(os.getenv("HK_DAILY_BOOTSTRAP_CALENDAR_DAYS", "400"))
+# 港股日线分段请求跨度（天）
+HK_DAILY_CHUNK_DAYS = int(os.getenv("HK_DAILY_CHUNK_DAYS", "90"))
+# 港股截面最少标的数（面板就绪判定）
+HK_MIN_PANEL_SYMBOLS = int(os.getenv("HK_MIN_PANEL_SYMBOLS", "500"))
+# 港股分时周期（与 A 股相同的 1min/5min 窗口）
+HK_INTRADAY_FINE_PERIOD = os.getenv("HK_INTRADAY_FINE_PERIOD", "1")
+HK_INTRADAY_COARSE_PERIOD = os.getenv("HK_INTRADAY_COARSE_PERIOD", "5")
+HK_INTRADAY_FINE_CALENDAR_DAYS = int(os.getenv("HK_INTRADAY_FINE_CALENDAR_DAYS", "5"))
+HK_RECENT_INTRADAY_CALENDAR_DAYS = int(os.getenv("HK_RECENT_INTRADAY_CALENDAR_DAYS", "14"))
+# 港股估值截面：是否启用逐票调用（stock_hk_financial_indicator_em）
+HK_SNAPSHOT_PER_SYMBOL_ENABLED = os.getenv("HK_SNAPSHOT_PER_SYMBOL_ENABLED", "false").lower() == "true"
+# 港股市场健康检查最大陈旧天数
+HK_MAX_STALE_DAYS = int(os.getenv("HK_MAX_STALE_DAYS", "3"))

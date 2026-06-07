@@ -70,15 +70,45 @@ AkShare → zplan-股价 ETL → zplan.db
 - 选股、回测 **禁止** 直连 AkShare 拉 K 线  
 - 选股、回测 **禁止** 直接 SQL 摸 `daily_prices`（用 `get_bars` / `get_panel`）
 
+## 数据管道（自动运行）
+
+**定时任务（launchd）**：`launchctl list | grep zplan`
+
+| Job | 时间 | 内容 |
+|-----|------|------|
+| `com.zplan.pipeline-daily` | 每天 17:35 | 日线+衍生+估值+资讯+企微播报 |
+| `com.zplan.pipeline-weekly` | 周五 18:00 | 全量含季报+规则打分 |
+| `com.zplan.news-intraday` | 8:00/12:00/16:00/21:00 | 东财快讯+新闻关联 |
+| `ai.zplan.wecom-direct` | 常驻 | 企微 Bot 直连 |
+
+```bash
+# 一键查看所有数据板块状态
+~/my_stock_ai/zplan-股价/scripts/run_full_pipeline.sh --status
+
+# 手动跑一次（日常精简版）
+~/my_stock_ai/zplan-股价/scripts/run_full_pipeline.sh --lite
+
+# 手动跑全量
+~/my_stock_ai/zplan-股价/scripts/run_full_pipeline.sh
+
+# 看日志
+tail ~/my_stock_ai/zplan-资讯/logs/full_pipeline_*.log
+```
+
+**机器休眠**：唤醒后 launchd 自动补跑，管道增量+补缺机制兜底。企微群会收到盘后数据状态播报。
+
 ## 常用命令
 
 ```bash
+# 企微选股测试
+cd zplan-资讯 && .venv/bin/python openclaw_bridge.py wechat-reply --text "选股 平安银行"
+
 # 行情同步（东财，需网络）
 cd zplan-股价 && .venv/bin/python main.py --catch-up-panel --workers 8
 
 # 选股流水线
 cd zplan-选股 && .venv/bin/python main.py init-rule
-cd zplan-选股 && .venv/bin/python main.py llm-top --top 300
+cd zplan-选股 && .venv/bin/python main.py llm-top --top 300    # LLM 简评（¥1.19/次）
 
 # 回测迭代闭环（每日 / 每周）
 cd zplan-回测 && .venv/bin/python main.py iterate verify
@@ -88,7 +118,14 @@ cd zplan-回测 && .venv/bin/python main.py iterate history
 
 迭代记录：`zplan-资讯/backtest_review/iterations/`
 
-## 当前迭代方向（2026-05）
+## 近期修复（2026-06-05）
+
+1. 企微 JSON 解析失败 → `ZPLAN_ROOT` env var 未解析 + 管道 flush 修复
+2. 衍生指标停更 2 周 → `enrich_daily_fields.py` date bug 修复
+3. LLM 不工作 → `DEEPSEEK_API_KEY` 从 Google key 改为 DeepSeek key
+4. 资讯链接不可点击 → 从 markdown `[title](url)` 改为明文 URL
+5. LLM 简评从 35 字扩展到 60 字，新增 📊📋💡 等多维度展示
+6. 创建统一数据管道 `run_full_pipeline.sh` + 企微播报
 
 用户在优化 **LLM 选股 Top10 失败率**（run_id=8 曾 100% fail）。主要问题：
 

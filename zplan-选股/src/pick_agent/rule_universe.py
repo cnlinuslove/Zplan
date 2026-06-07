@@ -1,4 +1,7 @@
-"""全市场规则分初始化 → ``stock_rule_scores``。"""
+"""全市场规则分初始化 → ``stock_rule_scores``。
+
+支持 v1（动量）和 v2（反转+资金流+概念热度）两套评分。
+"""
 from __future__ import annotations
 
 import json
@@ -6,12 +9,15 @@ import logging
 from datetime import date
 from typing import Any
 
+import numpy as np
 import pandas as pd
+from sqlalchemy import select
 
 from zplan_shared.feature_store import get_features_panel
 from zplan_shared.features import feature_flag, scan_universe_features
 from zplan_shared.market import get_history_window, get_panel, latest_trade_date
 from zplan_shared.market_health import check_market_health
+from zplan_shared.models import SessionLocal, StockConceptMember, init_db
 from zplan_shared.stock_rule_scores import count_scores, upsert_rule_scores
 
 from pick_agent.scanner import (
@@ -20,9 +26,60 @@ from pick_agent.scanner import (
     _prefilter_panel,
 )
 from pick_agent.scoring import apply_momentum_cap, quick_technical_score, verdict_from_score
+from pick_agent.scoring_v2 import (
+    PRESET_SCHEMES,
+    compute_score_v2,
+    clear_quality_cache,
+    set_quality_cache,
+)
 from pick_agent.strategy import PickStrategy, load_strategy
 
 logger = logging.getLogger(__name__)
+
+# ── 概念热度（生产模式）─────────────────────────────
+
+_concept_members_cache: dict[str, list[str]] | None = None
+
+
+def _load_concept_members_prod() -> dict[str, list[str]]:
+    """加载概念→股票映射（首次调用后缓存）。"""
+    global _concept_members_cache
+    if _concept_members_cache is not None:
+        return _concept_members_cache
+    init_db()
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(StockConceptMember.ts_code, StockConceptMember.concept_name)
+        ).all()
+    result: dict[str, list[str]] = {}
+    for code, concept in rows:
+        result.setdefault(code, []).append(concept)
+    _concept_members_cache = result
+    logger.info("概念数据加载: %s 只股票", len(result))
+    return result
+
+
+def _compute_concept_heat_prod(
+    feat_df: pd.DataFrame,
+    concept_map: dict[str, list[str]],
+) -> dict[str, float]:
+    """从特征 DataFrame 计算概念热度（生产模式）。"""
+    if "ret_20d" not in feat_df.columns or "ts_code" not in feat_df.columns:
+        return {}
+    code_ret = dict(zip(feat_df["ts_code"], feat_df["ret_20d"]))
+    concept_rets: dict[str, list[float]] = {}
+    for code, concepts in concept_map.items():
+        ret = code_ret.get(code)
+        if ret is None or pd.isna(ret):
+            continue
+        for c in concepts:
+            concept_rets.setdefault(c, []).append(float(ret))
+    heat: dict[str, float] = {}
+    for c, rets in concept_rets.items():
+        if len(rets) >= 3:
+            heat[c] = sum(rets) / len(rets)
+    logger.info("概念热度计算: %s 个概念", len(heat))
+    return heat
 
 
 def _signals_from_features(features: dict[str, float | None]) -> list[str]:
@@ -53,8 +110,14 @@ def build_rule_scores_universe(
     *,
     strategy: PickStrategy | None = None,
     skip_health_check: bool = False,
+    use_v2: bool = False,
 ) -> dict[str, Any]:
-    """向量化规则分写入 ``stock_rule_scores``（全预筛池，非仅 Top N）。"""
+    """向量化规则分写入 ``stock_rule_scores``（全预筛池，非仅 Top N）。
+
+    Args:
+        use_v2: True 时使用 scoring_v2 的 reversal_flow_concept 预设方案。
+                含反转低吸 + 资金流向 + 概念热度因子。
+    """
     strat = strategy or load_strategy()
 
     if not skip_health_check:
@@ -119,23 +182,46 @@ def build_rule_scores_universe(
     name_map = dict(zip(meta["ts_code"], meta["name"].fillna("")))
     close_map = dict(zip(filtered["ts_code"], filtered["close"]))
 
+    # ── v2 模式：概念热度 + 新评分 ──
+    if use_v2:
+        concept_map = _load_concept_members_prod()
+        concept_heat = _compute_concept_heat_prod(feat_df, concept_map)
+        v2_factors, v2_weights = PRESET_SCHEMES["reversal_flow_concept"]
+        logger.info(
+            "v2 模式启用: %s 个因子, 概念 %s 个, 热门概念 Top5: %s",
+            len(v2_factors),
+            len(concept_heat),
+            sorted(concept_heat.items(), key=lambda x: -x[1])[:5] if concept_heat else [],
+        )
+
     rows: list[dict[str, Any]] = []
     for _, r in feat_df.iterrows():
         code = str(r["ts_code"])
         features = {k: r[k] for k in r.index if k != "ts_code" and pd.notna(r[k])}
         ret20 = features.get("ret_20d")
-        tech = apply_momentum_cap(
-            round(quick_technical_score(features), 1),
-            ret20,
-            max_ret_20d=max_ret,
-        )
+
+        if use_v2:
+            # 注入概念数据到特征
+            concepts = concept_map.get(code, [])
+            heats = [concept_heat.get(c) for c in concepts if c in concept_heat]
+            features["_concept_heat"] = float(np.mean(heats)) if heats else 0.0
+            features["_concept_count"] = float(len(concepts))
+            # v2 评分
+            score = compute_score_v2(
+                features, factors=v2_factors, weights=v2_weights, code=code
+            )
+        else:
+            score = quick_technical_score(features)
+            score = apply_momentum_cap(score, ret20, max_ret_20d=max_ret)
+
+        score = round(score, 1)
         rows.append(
             {
                 "ts_code": code,
                 "name": name_map.get(code),
-                "tech_score": tech,
-                "composite_score": tech,
-                "verdict": verdict_from_score(tech),
+                "tech_score": score,
+                "composite_score": score,
+                "verdict": verdict_from_score(score),
                 "close": float(close_map[code]) if code in close_map and pd.notna(close_map.get(code)) else features.get("close"),
                 "signals": _signals_from_features(features),
                 "features": {

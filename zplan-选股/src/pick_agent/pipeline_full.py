@@ -53,7 +53,7 @@ def run_deep_reports_top(
 ) -> dict[str, Any]:
     """对 LLM 简评后的候选取 Top N 生成深度研报（每只 1 次 API）。"""
     if not gemini_available():
-        raise RuntimeError("未配置 GEMINI_API_KEY")
+        raise RuntimeError("未配置 DEEPSEEK_API_KEY")
 
     strat = strategy or load_strategy()
     ranked = sorted(

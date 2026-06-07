@@ -36,7 +36,14 @@ def _auth_ok(handler: BaseHTTPRequestHandler) -> bool:
 def process_wechat_reply_request(body: dict[str, Any]) -> dict[str, Any]:
     text = str(body.get("text", "")).strip()
     push = bool(body.get("push", False))
-    payload = handle_inbound_text(text)
+    mentioned = bool(body.get("mentioned", False))
+    payload = handle_inbound_text(
+        text,
+        user_id=body.get("user_id") or None,
+        channel=str(body.get("channel") or "http_bridge"),
+        chat_id=body.get("chat_id") or None,
+        mentioned=mentioned,
+    )
     out: dict[str, Any] = {"ok": True, **payload}
     if push:
         text = payload.get("reply_text") or payload.get("reply_markdown")

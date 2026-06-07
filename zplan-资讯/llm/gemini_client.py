@@ -1,57 +1,226 @@
-"""Gemini REST client for news summarization."""
+"""LLM 客户端（已切换至 DeepSeek，保留原函数名向后兼容）。
+
+新闻摘要 / 快讯简报 / 资讯问答 / 连通性探测。
+"""
+
 from __future__ import annotations
 
 import json
 import logging
 import re
-import threading
 import time as time_module
 from typing import Any
 
 import requests
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from config import (
-    GEMINI_API_BASE_URL,
-    GEMINI_API_KEY,
+    DEEPSEEK_API_BASE_URL,
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
+    DEEPSEEK_MIN_SECONDS_BETWEEN_CALLS,
+    DEEPSEEK_MODEL,
+    DEEPSEEK_TIMEOUT_SECONDS,
     GEMINI_MAX_OUTPUT_TOKENS,
     GEMINI_MIN_SECONDS_BETWEEN_CALLS,
     GEMINI_MODEL,
     GEMINI_SUMMARY_CHARS_PER_ITEM,
     GEMINI_SUMMARY_MAX_ITEMS,
-    GEMINI_TIMEOUT_SECONDS,
+    LLM_SUMMARY_ENABLED,
 )
 from outbound_http import get_proxied_requests_session, resolve_effective_proxy_url
 
 logger = logging.getLogger(__name__)
 
-_gemini_last_call_mono = 0.0
-_gemini_pace_lock = threading.Lock()
+# ── 模型选择：优先 DEEPSEEK_MODEL，回退到 GEMINI_MODEL ────────────
 
 
-def _pace_gemini_http() -> None:
-    """任意两次 Gemini HTTP 之间强制间隔，降低 429（含 tenacity 重试）。"""
-    gap = GEMINI_MIN_SECONDS_BETWEEN_CALLS
-    if gap <= 0:
-        return
-    global _gemini_last_call_mono
-    with _gemini_pace_lock:
-        now = time_module.monotonic()
-        wait_s = _gemini_last_call_mono + gap - now
-        if wait_s > 0:
-            time_module.sleep(wait_s)
-        _gemini_last_call_mono = time_module.monotonic()
+def _effective_model() -> str:
+    """返回实际使用的模型名。"""
+    return DEEPSEEK_MODEL or GEMINI_MODEL or "deepseek-chat"
 
 
-# 财经推文里易误触默认安全阈值，放宽到 BLOCK_ONLY_HIGH（仍拦截明确高危）
-_GEMINI_SAFETY_SETTINGS: list[dict[str, str]] = [
-    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
-    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
-    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
-]
+def _effective_max_tokens(default_min: int = 512) -> int:
+    return max(default_min, DEEPSEEK_MAX_OUTPUT_TOKENS or GEMINI_MAX_OUTPUT_TOKENS or 4096)
 
-# 结构化输出：避免模型在 overview/bullets 中写出未转义引号导致 json.loads 失败
+
+# ── DeepSeek 限额提示（替代原 Gemini 429 解析）───────────────────────
+
+
+def _parse_deepseek_quota_hint(error_text: str) -> str | None:
+    """从 DeepSeek 错误响应中提取可读的限额提示。"""
+    try:
+        body = json.loads(error_text)
+    except json.JSONDecodeError:
+        body = None
+    if isinstance(body, dict):
+        err = body.get("error") or {}
+        msg = str(err.get("message") or "")
+        code = str(err.get("code") or "")
+        if "429" in code or "rate" in msg.lower():
+            return (
+                f"DeepSeek 请求频率超限（HTTP 429）。"
+                "请稍后重试，或访问 https://platform.deepseek.com/usage 查看用量。"
+            )
+        if "401" in code or "auth" in msg.lower():
+            return "DeepSeek API Key 无效（HTTP 401），请检查 .env 中 DEEPSEEK_API_KEY"
+        if "insufficient" in msg.lower():
+            return f"DeepSeek 账户余额不足，请充值：https://platform.deepseek.com/top_up"
+    return None
+
+
+# ── HTTP helpers ─────────────────────────────────────────────────────
+
+
+def _http_post(url: str, **kwargs: Any) -> requests.Response:
+    return get_proxied_requests_session().post(url, **kwargs)
+
+
+def _completion_url() -> str:
+    return f"{DEEPSEEK_API_BASE_URL.rstrip('/')}/chat/completions"
+
+
+def deepseek_available() -> bool:
+    return bool(DEEPSEEK_API_KEY.strip())
+
+
+# 向后兼容别名
+gemini_available = deepseek_available
+
+
+def gemini_outbound_proxy_info() -> dict[str, str | None]:
+    proxy_url, source = resolve_effective_proxy_url()
+    return {"outbound_proxy": proxy_url, "outbound_proxy_source": source}
+
+
+# ── 旧异常类保留（向后兼容）─────────────────────────────────────────
+
+
+class GeminiSummaryError(RuntimeError):
+    """LLM 摘要/问答失败。"""
+    pass
+
+
+class GeminiBlockedError(GeminiSummaryError):
+    """内容安全拦截（DeepSeek 极少触发，保留兼容）。"""
+    pass
+
+
+# ── JSON 解析 ────────────────────────────────────────────────────────
+
+
+def _strip_md_fence(text: str) -> str:
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+    text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+    text = re.sub(r"\s*```\s*$", "", text)
+    return text.strip()
+
+
+def _extract_json_block(text: str) -> dict[str, Any]:
+    text = _strip_md_fence(text)
+    if not text:
+        raise GeminiSummaryError("LLM 空响应")
+    if text.startswith("{"):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        raise GeminiSummaryError(f"LLM 响应无 JSON 对象, text_head={text[:120]!r}")
+    return json.loads(match.group(0))
+
+
+def _clip(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+# ── 低层 DeepSeek chat/completions ──────────────────────────────────
+
+
+def _chat_completion(
+    messages: list[dict[str, str]],
+    *,
+    temperature: float = 0.25,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    response_format: dict[str, str] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str = "auto",
+    timeout: int | None = None,
+) -> requests.Response:
+    """发送 chat/completions 请求。"""
+    body: dict[str, Any] = {
+        "model": model or _effective_model(),
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens or _effective_max_tokens(),
+    }
+    if response_format:
+        body["response_format"] = response_format
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = tool_choice
+
+    return _http_post(
+        _completion_url(),
+        json=body,
+        headers={
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        timeout=timeout or DEEPSEEK_TIMEOUT_SECONDS,
+    )
+
+
+def _extract_text_and_check(resp: requests.Response) -> str:
+    """从 chat/completions 响应提取文本，异常时抛 GeminiSummaryError。"""
+    if resp.status_code >= 400:
+        raise GeminiSummaryError(
+            f"LLM HTTP {resp.status_code}: {(resp.text or '')[:300]}"
+        )
+    body = resp.json()
+    choices = body.get("choices") or []
+    if not choices:
+        raise GeminiSummaryError("LLM 返回无 choices")
+    msg = choices[0].get("message") or {}
+    text_out = str(msg.get("content", "")).strip()
+    if not text_out:
+        finish = str(choices[0].get("finish_reason", ""))
+        if finish and finish != "stop":
+            raise GeminiSummaryError(f"LLM 空响应 finish_reason={finish!r}")
+        raise GeminiSummaryError("LLM 返回空内容")
+    return text_out
+
+
+# ── 重试逻辑 ─────────────────────────────────────────────────────────
+
+
+def _llm_should_retry(exc: BaseException) -> bool:
+    if isinstance(exc, GeminiBlockedError):
+        return False
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+        return True
+    if isinstance(exc, GeminiSummaryError):
+        s = str(exc)
+        if "gemini blocked" in s:
+            return False
+        m = re.search(r"LLM HTTP (\d{3})", s)
+        if m:
+            code = int(m.group(1))
+            return code == 429 or code >= 500
+        return True
+    if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError)):
+        return True
+    return False
+
+
+# ── 新闻摘要 ─────────────────────────────────────────────────────────
+
 _NEWS_SUMMARY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -74,143 +243,6 @@ _NEWS_SUMMARY_SCHEMA: dict[str, Any] = {
 }
 
 
-class GeminiSummaryError(RuntimeError):
-    pass
-
-
-def _gemini_http_post(url: str, **kwargs: Any) -> requests.Response:
-    return get_proxied_requests_session().post(url, **kwargs)
-
-
-def gemini_outbound_proxy_info() -> dict[str, str | None]:
-    proxy_url, source = resolve_effective_proxy_url()
-    return {"outbound_proxy": proxy_url, "outbound_proxy_source": source}
-
-
-class GeminiBlockedError(GeminiSummaryError):
-    """安全策略拦截等：重试通常无效。"""
-
-
-def _gemini_should_retry(exc: BaseException) -> bool:
-    """429/5xx/网络/JSON 可重试；4xx（除 429）与安全拦截不重试。"""
-    if isinstance(exc, GeminiBlockedError):
-        return False
-    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
-        return True
-    if isinstance(exc, GeminiSummaryError):
-        s = str(exc)
-        if "gemini blocked" in s:
-            return False
-        m = re.search(r"gemini http (\d{3})", s)
-        if m:
-            code = int(m.group(1))
-            return code == 429 or code >= 500
-        return True
-    if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError)):
-        return True
-    return False
-
-
-def gemini_available() -> bool:
-    return bool(GEMINI_API_KEY.strip())
-
-
-def _strip_md_fence(text: str) -> str:
-    text = text.strip()
-    if not text.startswith("```"):
-        return text
-    text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
-    text = re.sub(r"\s*```\s*$", "", text)
-    return text.strip()
-
-
-def _extract_json_block(text: str) -> dict[str, Any]:
-    text = _strip_md_fence(text)
-    if not text:
-        raise GeminiSummaryError("gemini empty text response")
-    if text.startswith("{"):
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-    match = re.search(r"\{[\s\S]*\}", text)
-    if not match:
-        raise GeminiSummaryError(f"gemini response missing json object, text_head={text[:120]!r}")
-    return json.loads(match.group(0))
-
-
-def _clip(text: str, limit: int) -> str:
-    text = text.strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
-
-
-def _parse_retry_seconds_from_error(text: str) -> float | None:
-    m = re.search(r"retry in ([\d.]+)\s*s", text, re.IGNORECASE)
-    if m:
-        try:
-            return float(m.group(1))
-        except ValueError:
-            return None
-    return None
-
-
-def _parse_gemini_quota_hint(error_text: str) -> str | None:
-    """从 429 JSON 解析 quotaId，区分「每日」与「每分钟」限额（免费档常误读）。"""
-    try:
-        body = json.loads(error_text)
-    except json.JSONDecodeError:
-        body = None
-    violations: list[dict[str, Any]] = []
-    if isinstance(body, dict):
-        err = body.get("error") or {}
-        for detail in err.get("details") or []:
-            if isinstance(detail, dict) and "violations" in detail:
-                violations.extend(detail.get("violations") or [])
-    quota_ids = [str(v.get("quotaId") or "") for v in violations if isinstance(v, dict)]
-    if "GenerateRequestsPerDayPerProjectPerModel" in error_text or any(
-        "PerDay" in q for q in quota_ids
-    ):
-        model = GEMINI_MODEL
-        for v in violations:
-            if isinstance(v, dict) and v.get("quotaDimensions", {}).get("model"):
-                model = str(v["quotaDimensions"]["model"])
-                break
-        return (
-            f"Gemini 免费档 **当日请求次数已用尽**（quotaId: 每日限额，"
-            f"模型 {model} 约 20 次/天）。等几分钟无法恢复；需等到 **UTC 日切后**、"
-            f"换 API Key/项目，或在 Google AI 开通计费。用量: https://ai.dev/rate-limit"
-        )
-    if any("PerMinute" in q or "PerMinutePerProject" in q for q in quota_ids):
-        wait_s = _parse_retry_seconds_from_error(error_text)
-        w = f"{wait_s:.0f}s" if wait_s else "约 1 分钟"
-        return f"Gemini 每分钟请求次数已满（RPM），请等待 {w} 后重试。"
-    if "free_tier" in error_text.lower() and "limit: 20" in error_text.lower():
-        return (
-            f"Gemini 免费档限额已触顶（{GEMINI_MODEL}，常见为 **20 次/天** 而非/不仅是每分钟）。"
-            "请查看 https://ai.dev/rate-limit ；要今天继续测 LLM 需新 Key 或开通计费。"
-        )
-    return None
-
-
-def _gemini_retry_wait(retry_state: Any) -> float:
-    """429 时优先采用 API 返回的 retry 秒数。"""
-    if retry_state.outcome is not None:
-        exc = retry_state.outcome.exception()
-        if exc is not None:
-            secs = _parse_retry_seconds_from_error(str(exc))
-            if secs is not None:
-                return min(secs + 1.5, 90.0)
-    return min(2 ** retry_state.attempt_number * 2, 60)
-
-
-@retry(
-    wait=wait_exponential(multiplier=2, min=3, max=55),
-    stop=stop_after_attempt(6),
-    retry=retry_if_exception(_gemini_should_retry),
-    reraise=True,
-)
 def summarize_news_with_gemini(
     *,
     topic_display_name: str,
@@ -219,8 +251,9 @@ def summarize_news_with_gemini(
     max_items: int | None = None,
     max_chars_per_item: int | None = None,
 ) -> tuple[str, str]:
-    if not gemini_available():
-        raise GeminiSummaryError("GEMINI_API_KEY not configured")
+    """新闻摘要（已切换 DeepSeek，保留函数名兼容）。"""
+    if not deepseek_available():
+        raise GeminiSummaryError("DEEPSEEK_API_KEY 未配置")
 
     cap_n = max_items if max_items is not None else GEMINI_SUMMARY_MAX_ITEMS
     cap_c = max_chars_per_item if max_chars_per_item is not None else GEMINI_SUMMARY_CHARS_PER_ITEM
@@ -230,7 +263,14 @@ def summarize_news_with_gemini(
         text = _clip(item.get("text") or "", cap_c)
         lines.append(f"[{idx}] {text}")
 
-    prompt = f"""你是资深中文财经/宏观资讯编辑。下面编号 [1]、[2]… 是来自 X 的帖子原文片段（可能含噪声）。主题为「{topic_display_name}」，时间窗口约最近 {window_hours} 小时。
+    schema_text = json.dumps(_NEWS_SUMMARY_SCHEMA, ensure_ascii=False, indent=2)
+
+    system = (
+        "你是一个 JSON-only API。始终只输出一个合法的 JSON 对象，不要包含 markdown 围栏。\n\n"
+        f"输出必须符合以下 JSON Schema：\n{schema_text}"
+    )
+
+    user = f"""你是资深中文财经/宏观资讯编辑。下面编号 [1]、[2]… 是来自 X 的帖子原文片段（可能含噪声）。主题为「{topic_display_name}」，时间窗口约最近 {window_hours} 小时。
 
 你必须输出合法 JSON（不要 markdown 代码围栏），结构固定为：
 {{
@@ -250,53 +290,22 @@ def summarize_news_with_gemini(
 帖子原文（编号即 [n]）：
 {chr(10).join(lines) if lines else "(无帖子)"}"""
 
-    url = f"{GEMINI_API_BASE_URL.rstrip('/')}/models/{GEMINI_MODEL}:generateContent"
-    _pace_gemini_http()
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "safetySettings": _GEMINI_SAFETY_SETTINGS,
-        "generationConfig": {
-            "temperature": 0.25,
-            "maxOutputTokens": max(512, GEMINI_MAX_OUTPUT_TOKENS),
-            "responseMimeType": "application/json",
-            "responseSchema": _NEWS_SUMMARY_SCHEMA,
-        },
-    }
-    # 使用 Header 传 Key（与官方文档一致），避免 ?key= 进 URL 被代理/日志干扰
-    resp = _gemini_http_post(
-        url,
-        json=payload,
-        headers={"x-goog-api-key": GEMINI_API_KEY},
-        timeout=GEMINI_TIMEOUT_SECONDS,
+    resp = _chat_completion(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0.25,
+        max_tokens=_effective_max_tokens(512),
+        response_format={"type": "json_object"},
     )
-    if resp.status_code >= 400:
-        raise GeminiSummaryError(f"gemini http {resp.status_code}: {resp.text[:300]}")
 
-    body = resp.json()
-    candidates = body.get("candidates") or []
-    if not candidates:
-        raise GeminiSummaryError("gemini returned no candidates")
-
-    c0 = candidates[0]
-    fr = str(c0.get("finishReason", "") or "")
-    parts = (c0.get("content") or {}).get("parts") or []
-    text_out = "".join(part.get("text", "") for part in parts).strip()
-
-    if not text_out:
-        fb = body.get("promptFeedback") or {}
-        br = fb.get("blockReason") if isinstance(fb, dict) else None
-        if fr == "SAFETY" or br:
-            raise GeminiBlockedError(
-                "gemini blocked: finishReason="
-                f"{fr!r} blockReason={br!r} promptFeedback="
-                f"{json.dumps(fb, ensure_ascii=False)[:400]}"
-            )
-        raise GeminiSummaryError(f"gemini empty text; finishReason={fr!r}")
+    text_out = _extract_text_and_check(resp)
 
     try:
         parsed = _extract_json_block(text_out)
     except json.JSONDecodeError as exc:
-        raise GeminiSummaryError(f"gemini json parse: {exc}; head={text_out[:200]!r}") from exc
+        raise GeminiSummaryError(f"LLM JSON 解析: {exc}; head={text_out[:200]!r}") from exc
 
     overview = str(parsed.get("overview", "")).strip()
     bullets_raw = parsed.get("bullets")
@@ -312,7 +321,7 @@ def summarize_news_with_gemini(
         sentiment = "neutral"
 
     if not overview and not bullets:
-        raise GeminiSummaryError("gemini returned empty overview and bullets")
+        raise GeminiSummaryError("LLM 返回空 overview 与 bullets")
 
     header = f"【{topic_display_name}】最近{window_hours}小时"
     lines_out: list[str] = [header, "", "【综述】", overview or "（暂无）", "", "【要点】"]
@@ -320,10 +329,15 @@ def summarize_news_with_gemini(
         if not b.startswith("-"):
             b = f"- {b}"
         lines_out.append(b)
-    lines_out.extend(["", f"（本窗口共 {len(items)} 条帖子原文已完整入库，可在 viewer / 数据库 news_items_raw 中按 run 查看。）"])
+    lines_out.extend([
+        "",
+        f"（本窗口共 {len(items)} 条帖子原文已完整入库，可在 viewer / 数据库 news_items_raw 中按 run 查看。）",
+    ])
     summary = "\n".join(lines_out)
     return summary, sentiment
 
+
+# ── 快讯简报 ─────────────────────────────────────────────────────────
 
 _DIGEST_FLASH_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -355,20 +369,14 @@ _DIGEST_FLASH_SCHEMA: dict[str, Any] = {
 }
 
 
-@retry(
-    wait=wait_exponential(multiplier=2, min=3, max=55),
-    stop=stop_after_attempt(4),
-    retry=retry_if_exception(_gemini_should_retry),
-    reraise=True,
-)
 def summarize_flash_digest_with_gemini(
     items: list[dict[str, str | None]],
     *,
     max_items: int = 8,
 ) -> dict[str, Any]:
-    """东财快讯 → 简报综述（含要点与来源编号，链接由调用方拼接）。"""
-    if not gemini_available():
-        raise GeminiSummaryError("GEMINI_API_KEY not configured")
+    """东财快讯 → 简报综述（已切换 DeepSeek）。"""
+    if not deepseek_available():
+        raise GeminiSummaryError("DEEPSEEK_API_KEY 未配置")
 
     lines: list[str] = []
     for idx, item in enumerate(items[:max_items], start=1):
@@ -376,7 +384,14 @@ def summarize_flash_digest_with_gemini(
         summary = _clip(item.get("summary") or "", 200)
         lines.append(f"[{idx}] 标题: {title}\n摘要: {summary}")
 
-    prompt = f"""你是 A 股/宏观资讯编辑。以下为东方财富全球快讯（编号 [1]、[2]…）。
+    schema_text = json.dumps(_DIGEST_FLASH_SCHEMA, ensure_ascii=False, indent=2)
+
+    system = (
+        "你是一个 JSON-only API。始终只输出一个合法的 JSON 对象，不要包含 markdown 围栏。\n\n"
+        f"输出必须符合以下 JSON Schema：\n{schema_text}"
+    )
+
+    user = f"""你是 A 股/宏观资讯编辑。以下为东方财富全球快讯（编号 [1]、[2]…）。
 
 输出合法 JSON（无 markdown 围栏）：
 {{
@@ -394,37 +409,17 @@ def summarize_flash_digest_with_gemini(
 快讯：
 {chr(10).join(lines) if lines else "(无)"}"""
 
-    url = f"{GEMINI_API_BASE_URL.rstrip('/')}/models/{GEMINI_MODEL}:generateContent"
-    _pace_gemini_http()
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "safetySettings": _GEMINI_SAFETY_SETTINGS,
-        "generationConfig": {
-            "temperature": 0.25,
-            "maxOutputTokens": max(768, GEMINI_MAX_OUTPUT_TOKENS),
-            "responseMimeType": "application/json",
-            "responseSchema": _DIGEST_FLASH_SCHEMA,
-        },
-    }
-    resp = _gemini_http_post(
-        url,
-        json=payload,
-        headers={"x-goog-api-key": GEMINI_API_KEY},
-        timeout=GEMINI_TIMEOUT_SECONDS,
+    resp = _chat_completion(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0.25,
+        max_tokens=_effective_max_tokens(768),
+        response_format={"type": "json_object"},
     )
-    if resp.status_code >= 400:
-        raise GeminiSummaryError(f"gemini http {resp.status_code}: {resp.text[:300]}")
 
-    body = resp.json()
-    candidates = body.get("candidates") or []
-    if not candidates:
-        raise GeminiSummaryError("gemini returned no candidates")
-    text_out = "".join(
-        part.get("text", "")
-        for part in ((candidates[0].get("content") or {}).get("parts") or [])
-    ).strip()
-    if not text_out:
-        raise GeminiSummaryError("gemini empty digest response")
+    text_out = _extract_text_and_check(resp)
 
     parsed = _extract_json_block(text_out)
     overview = str(parsed.get("overview", "")).strip()
@@ -442,59 +437,41 @@ def summarize_flash_digest_with_gemini(
             if takeaway and source_index >= 1:
                 highlights.append({"takeaway": takeaway, "source_index": source_index})
     if not overview and not highlights:
-        raise GeminiSummaryError("gemini empty digest overview/highlights")
+        raise GeminiSummaryError("LLM 空摘要 overview/highlights")
     return {"overview": overview, "highlights": highlights[:6]}
 
 
-def _answer_info_question_http(prompt: str) -> str:
-    url = f"{GEMINI_API_BASE_URL.rstrip('/')}/models/{GEMINI_MODEL}:generateContent"
-    _pace_gemini_http()
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "safetySettings": _GEMINI_SAFETY_SETTINGS,
-        "generationConfig": {"temperature": 0.25, "maxOutputTokens": 1536},
-    }
-    resp = _gemini_http_post(
-        url,
-        json=payload,
-        headers={"x-goog-api-key": GEMINI_API_KEY},
-        timeout=GEMINI_TIMEOUT_SECONDS,
-    )
-    if resp.status_code >= 400:
-        raise GeminiSummaryError(f"gemini http {resp.status_code}: {(resp.text or '')[:300]}")
-    body = resp.json()
-    cands = body.get("candidates") or []
-    if not cands:
-        raise GeminiSummaryError("gemini no candidates")
-    parts = (cands[0].get("content") or {}).get("parts") or []
-    text_out = "".join(str(p.get("text", "")) for p in parts).strip()
-    if not text_out:
-        raise GeminiSummaryError("gemini empty answer")
-    return text_out.strip()
+# ── 资讯问答 ─────────────────────────────────────────────────────────
 
 
-@retry(
-    wait=_gemini_retry_wait,
-    stop=stop_after_attempt(5),
-    retry=retry_if_exception(_gemini_should_retry),
-    reraise=True,
-)
 def answer_info_question_with_gemini(
     *,
     question: str,
     hits: list[Any],
     data_context: str | None = None,
 ) -> str:
-    """生成【结论】【观点】两段；引用来源清单由调用方另行附上。"""
-    if not gemini_available():
-        raise GeminiSummaryError("GEMINI_API_KEY not configured")
+    """资讯问答（已切换 DeepSeek，保留函数名兼容）。"""
+    if not deepseek_available():
+        raise GeminiSummaryError("DEEPSEEK_API_KEY 未配置")
 
     lines: list[str] = []
     for idx, h in enumerate(hits[:8], start=1):
-        src = getattr(h, "source_label", None) or (h.get("source") if isinstance(h, dict) else "?")
-        title = getattr(h, "title", None) or (h.get("title") if isinstance(h, dict) else "")
-        snip = getattr(h, "snippet", None) or (h.get("snippet") if isinstance(h, dict) else "")
-        url = getattr(h, "url", None) or (h.get("url") if isinstance(h, dict) else "")
+        src = (
+            getattr(h, "source_label", None)
+            or (h.get("source") if isinstance(h, dict) else "?")
+        )
+        title = (
+            getattr(h, "title", None)
+            or (h.get("title") if isinstance(h, dict) else "")
+        )
+        snip = (
+            getattr(h, "snippet", None)
+            or (h.get("snippet") if isinstance(h, dict) else "")
+        )
+        url = (
+            getattr(h, "url", None)
+            or (h.get("url") if isinstance(h, dict) else "")
+        )
         lines.append(
             f"[{idx}] 来源={src} | 标题={_clip(str(title), 220)} | "
             f"摘要={_clip(str(snip or ''), 400)} | 链接={url or '无'}"
@@ -503,7 +480,9 @@ def answer_info_question_with_gemini(
     data_block = (data_context or "").strip() or "（无量化数据上下文）"
     news_block = "\n".join(lines) if lines else "（无新闻片段，仅可依据量化数据作答）"
 
-    prompt = f"""你是资深 A 股/宏观资讯分析师。用户问：{question.strip()}
+    system = "你是资深 A 股/宏观资讯分析师。回答必须简洁、有依据、输出纯文本。"
+
+    user = f"""你是资深 A 股/宏观资讯分析师。用户问：{question.strip()}
 
 【量化数据（东财等，优先采信）】
 {data_block}
@@ -524,35 +503,39 @@ def answer_info_question_with_gemini(
 
 总字数不超过 450 字。不要输出【引用来源】，来源列表由系统另附。"""
 
-    return _answer_info_question_http(prompt)
+    resp = _chat_completion(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0.25,
+        max_tokens=1536,
+    )
+
+    return _extract_text_and_check(resp)
 
 
-def _check_gemini_connectivity_once() -> dict[str, Any]:
-    """最小 generateContent 探测；返回 ok/http_status/error 片段，响应中绝不包含 API Key。"""
-    if not gemini_available():
-        return {"ok": False, "error": "GEMINI_API_KEY 未配置或为空"}
+# ── 连通性探测 ───────────────────────────────────────────────────────
+
+
+def _check_llm_connectivity_once() -> dict[str, Any]:
+    """最小 chat/completions 探测。"""
+    if not deepseek_available():
+        return {"ok": False, "error": "DEEPSEEK_API_KEY 未配置或为空"}
     base: dict[str, Any] = dict(gemini_outbound_proxy_info())
-    url = f"{GEMINI_API_BASE_URL.rstrip('/')}/models/{GEMINI_MODEL}:generateContent"
-    _pace_gemini_http()
-    payload = {
-        "contents": [{"parts": [{"text": '只回复合法 JSON：{"ok":true}'}]}],
-        "generationConfig": {
-            "temperature": 0,
-            "maxOutputTokens": 32,
-            "responseMimeType": "application/json",
-        },
-    }
     try:
-        resp = _gemini_http_post(
-            url,
-            json=payload,
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-            timeout=min(30, GEMINI_TIMEOUT_SECONDS),
+        resp = _chat_completion(
+            [{"role": "user", "content": '只回复合法 JSON：{"ok":true}'}],
+            temperature=0,
+            max_tokens=32,
+            response_format={"type": "json_object"},
+            timeout=min(30, DEEPSEEK_TIMEOUT_SECONDS),
         )
     except (requests.Timeout, requests.ConnectionError) as exc:
         return {**base, "ok": False, "error": f"network: {type(exc).__name__}: {exc}"[:300]}
     except requests.RequestException as exc:
         return {**base, "ok": False, "error": f"request: {type(exc).__name__}: {exc}"[:300]}
+
     if resp.status_code >= 400:
         err_text = (resp.text or "")[:500]
         out: dict[str, Any] = {
@@ -560,56 +543,18 @@ def _check_gemini_connectivity_once() -> dict[str, Any]:
             "ok": False,
             "http_status": resp.status_code,
             "error": err_text,
-            "model": GEMINI_MODEL,
+            "model": _effective_model(),
         }
         if resp.status_code == 429:
-            parsed = _parse_gemini_quota_hint(err_text)
-            out["hint"] = parsed or (
-                f"Gemini 429 配额超限（{GEMINI_MODEL}），详见 https://ai.dev/rate-limit"
-            )
-            if "GenerateRequestsPerDayPerProjectPerModel" in err_text or (
-                parsed and ("当日" in parsed or "次/天" in parsed)
-            ):
-                out["quota_kind"] = "daily"
-            elif parsed and "每分钟" in parsed:
-                out["quota_kind"] = "rpm"
-            else:
-                out["quota_kind"] = "unknown"
+            hint = _parse_deepseek_quota_hint(err_text)
+            out["hint"] = hint or "DeepSeek 429 配额超限"
         return out
-    try:
-        body = resp.json()
-    except json.JSONDecodeError as exc:
-        return {**base, "ok": False, "error": f"invalid json body: {exc}"}
-    cands = body.get("candidates") or []
-    if not cands:
-        return {
-            **base,
-            "ok": False,
-            "http_status": resp.status_code,
-            "error": "no candidates in response",
-            "model": GEMINI_MODEL,
-        }
-    return {**base, "ok": True, "http_status": resp.status_code, "model": GEMINI_MODEL}
+
+    return {**base, "ok": True, "http_status": resp.status_code, "model": _effective_model()}
 
 
 def check_gemini_connectivity() -> dict[str, Any]:
-    """探测 Gemini；遇 429 时按 API 提示等待后自动重试一次。"""
-    if not gemini_available():
-        return {"ok": False, "error": "GEMINI_API_KEY 未配置或为空"}
-    first = _check_gemini_connectivity_once()
-    if first.get("ok") or first.get("http_status") != 429:
-        return first
-    wait_s = _parse_retry_seconds_from_error(str(first.get("error", "")))
-    if wait_s is None:
-        return first
-    time_module.sleep(min(wait_s + 1.5, 90))
-    second = _check_gemini_connectivity_once()
-    second["retried_after_seconds"] = round(wait_s + 1.5, 1)
-    if not second.get("ok"):
-        parsed = _parse_gemini_quota_hint(str(second.get("error", "")))
-        second.setdefault(
-            "hint",
-            parsed
-            or "仍失败：若 quota_kind=daily 则需等 UTC 日切、换新 API Key 或开通计费。",
-        )
-    return second
+    """探测 LLM API 是否可达（已切换 DeepSeek，保留函数名兼容）。"""
+    if not deepseek_available():
+        return {"ok": False, "error": "DEEPSEEK_API_KEY 未配置或为空"}
+    return _check_llm_connectivity_once()

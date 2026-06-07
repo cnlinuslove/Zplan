@@ -141,7 +141,7 @@ def run_watchlist_daily(
             model=strat.llm_model,
         )
     elif use_llm and not gemini_available():
-        logger.warning("GEMINI_API_KEY 未配置，仅输出规则分")
+        logger.warning("DEEPSEEK_API_KEY 未配置，仅输出规则分")
 
     from zplan_shared.market import latest_trade_date
 

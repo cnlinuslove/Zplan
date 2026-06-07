@@ -1,0 +1,86 @@
+{
+  "A_baseline": {
+    "name": "方案 A: 纯图形（基线）",
+    "accuracy": 0.700942587832048,
+    "auc_ovr": 0.9171,
+    "per_class": {
+      "REAL_RALLY": {
+        "f1": 0.0437
+      },
+      "BULL_TRAP": {
+        "f1": 0.8627
+      },
+      "REAL_BREAKDOWN": {
+        "f1": 0.0559
+      },
+      "PANIC_SHAKEOUT": {
+        "f1": 0.762
+      }
+    },
+    "upward_auc": 0.5095,
+    "downward_auc": 0.6206
+  },
+  "A_smote": {
+    "name": "方案 A: 纯图形 + SMOTE",
+    "accuracy": 0.7143316195372751,
+    "auc_ovr": 0.9161,
+    "per_class": {
+      "REAL_RALLY": {
+        "f1": 0.0541
+      },
+      "BULL_TRAP": {
+        "f1": 0.8604
+      },
+      "REAL_BREAKDOWN": {
+        "f1": 0.0557
+      },
+      "PANIC_SHAKEOUT": {
+        "f1": 0.7889
+      }
+    },
+    "upward_auc": 0.5146,
+    "downward_auc": 0.6366
+  },
+  "B_baseline": {
+    "name": "方案 B: 图形 + 多维上下文",
+    "accuracy": 0.7057269351613824,
+    "auc_ovr": 0.9162,
+    "per_class": {
+      "REAL_RALLY": {
+        "f1": 0.0417
+      },
+      "BULL_TRAP": {
+        "f1": 0.8644
+      },
+      "REAL_BREAKDOWN": {
+        "f1": 0.0562
+      },
+      "PANIC_SHAKEOUT": {
+        "f1": 0.7683
+      }
+    },
+    "upward_auc": 0.5065,
+    "downward_auc": 0.6009
+  },
+  "B_smote": {
+    "name": "方案 B: 图形 + 多维 + SMOTE",
+    "accuracy": 0.7327549271636675,
+    "auc_ovr": 0.9155,
+    "per_class": {
+      "REAL_RALLY": {
+        "f1": 0.0332
+      },
+      "BULL_TRAP": {
+        "f1": 0.8633
+      },
+      "REAL_BREAKDOWN": {
+        "f1": 0.0578
+      },
+      "PANIC_SHAKEOUT": {
+        "f1": 0.8166
+      }
+    },
+    "upward_auc": 0.5043,
+    "downward_auc": 0.6259
+  }
+}

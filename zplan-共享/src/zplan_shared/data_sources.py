@@ -42,3 +42,33 @@ def daily_source_tag() -> str:
 
 def daily_provider_label() -> str:
     return _PROVIDER_LABELS[daily_provider()]
+
+
+# ── 港股 (HKEX) 数据源 ──────────────────────────────────────────
+HK_DAILY_SOURCE_EM = "akshare_hk_em"
+HK_DAILY_SOURCE_SINA = "akshare_hk_sina"
+
+_HK_PROVIDER_TO_TAG: dict[str, str] = {
+    "em": HK_DAILY_SOURCE_EM,
+    "sina": HK_DAILY_SOURCE_SINA,
+}
+_HK_PROVIDER_LABELS: dict[str, str] = {
+    "em": "东方财富（港股）",
+    "sina": "新浪财经（港股）",
+}
+
+
+def hk_daily_provider() -> str:
+    """港股日线数据源；默认 ``sina``（境外可访问），可选 ``em``（东财，境内更快）。"""
+    raw = os.getenv("HK_DAILY_PROVIDER", "sina").strip().lower()
+    if raw in ("em", "eastmoney", "east_money"):
+        return "em"
+    return "sina"
+
+
+def hk_daily_source_tag() -> str:
+    return _HK_PROVIDER_TO_TAG[hk_daily_provider()]
+
+
+def hk_daily_provider_label() -> str:
+    return _HK_PROVIDER_LABELS[hk_daily_provider()]

@@ -210,6 +210,7 @@ def scan_universe(
             industry_sc=ind_sc,
             intraday_adj=intra_adj,
             strategy=strat,
+            ts_code=code,
         )
         final = apply_momentum_cap(final, tech.features.get("ret_20d"), max_ret_20d=max_ret)
 

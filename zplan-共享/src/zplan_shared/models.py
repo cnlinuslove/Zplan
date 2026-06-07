@@ -27,22 +27,25 @@ class Base(DeclarativeBase):
 
 class StockList(Base):
     __tablename__ = "stock_list"
+    __table_args__ = (UniqueConstraint("ts_code", "market", name="uq_stock_list_ts_market"),)
 
     ts_code: Mapped[str] = mapped_column(String(16), primary_key=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     industry: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     listing_date: Mapped[Optional[Date]] = mapped_column(Date, nullable=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
 
 
 class DailyPrice(Base):
-    """A 股日线 OHLCV + 衍生字段（Phase A）。架构说明见 ``docs/DATA_ARCHITECTURE.md``。"""
+    """A 股 / 港股日线 OHLCV + 衍生字段（Phase A）。架构说明见 ``docs/DATA_ARCHITECTURE.md``。"""
 
     __tablename__ = "daily_prices"
-    __table_args__ = (UniqueConstraint("ts_code", "trade_date", name="uq_ts_trade_date"),)
+    __table_args__ = (UniqueConstraint("ts_code", "trade_date", "market", name="uq_ts_trade_date_market"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     trade_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     open: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -62,11 +65,12 @@ class DailyFeature(Base):
     """技术指标日频快照（Phase A.3，每票每个交易日一行）。"""
 
     __tablename__ = "daily_features"
-    __table_args__ = (UniqueConstraint("ts_code", "trade_date", name="uq_daily_features_ts_date"),)
+    __table_args__ = (UniqueConstraint("ts_code", "trade_date", "market", name="uq_daily_features_ts_date_market"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     trade_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     ma5: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     ma10: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -174,11 +178,12 @@ class DailySnapshot(Base):
     """日频估值 / 市值截面（Phase B）。"""
 
     __tablename__ = "daily_snapshot"
-    __table_args__ = (UniqueConstraint("ts_code", "trade_date", name="uq_snapshot_ts_date"),)
+    __table_args__ = (UniqueConstraint("ts_code", "trade_date", "market", name="uq_snapshot_ts_date_market"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     trade_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     pe_ttm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     pb: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     ps_ttm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -191,11 +196,12 @@ class DailySnapshot(Base):
 
 class FinancialIndicator(Base):
     __tablename__ = "financial_indicators"
-    __table_args__ = (UniqueConstraint("ts_code", "report_date", name="uq_fi_ts_report"),)
+    __table_args__ = (UniqueConstraint("ts_code", "report_date", "market", name="uq_fi_ts_report_market"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     report_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     pe_ttm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     pb: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     revenue: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -255,7 +261,7 @@ class NewsStockLink(Base):
 
     __tablename__ = "news_stock_link"
     __table_args__ = (
-        UniqueConstraint("news_source", "news_id", "ts_code", name="uq_news_stock_link"),
+        UniqueConstraint("news_source", "news_id", "ts_code", "market", name="uq_news_stock_link_market"),
         Index("ix_news_stock_link_ts_pub", "ts_code", "published_at_utc"),
         Index("ix_news_stock_link_source_news", "news_source", "news_id"),
     )
@@ -264,6 +270,7 @@ class NewsStockLink(Base):
     news_source: Mapped[str] = mapped_column(String(32), nullable=False)
     news_id: Mapped[int] = mapped_column(Integer, nullable=False)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     matched_by: Mapped[str] = mapped_column(String(32), nullable=False)
     event_type: Mapped[Optional[str]] = mapped_column(String(48), nullable=True)
@@ -301,7 +308,7 @@ class StockConceptMember(Base):
 
     __tablename__ = "stock_concept_members"
     __table_args__ = (
-        UniqueConstraint("concept_name", "ts_code", name="uq_stock_concept_member"),
+        UniqueConstraint("concept_name", "ts_code", "market", name="uq_stock_concept_member_market"),
         Index("ix_stock_concept_name", "concept_name"),
     )
 
@@ -309,6 +316,7 @@ class StockConceptMember(Base):
     concept_name: Mapped[str] = mapped_column(String(128), nullable=False)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     synced_at_utc: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
@@ -318,13 +326,14 @@ class PickWatchlist(Base):
     """用户持仓 / 关注订阅（每日简报）。"""
 
     __tablename__ = "pick_watchlist"
-    __table_args__ = (UniqueConstraint("ts_code", name="uq_pick_watchlist_ts_code"),)
+    __table_args__ = (UniqueConstraint("ts_code", "market", name="uq_pick_watchlist_ts_market"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
     name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     created_at_utc: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
@@ -336,7 +345,7 @@ class PickWatchlist(Base):
 
 
 class StockRuleScore(Base):
-    """全市场规则引擎打分快照（按交易日 + rule_version 唯一）。"""
+    """全市场规则引擎打分快照（按交易日 + rule_version + market 唯一）。"""
 
     __tablename__ = "stock_rule_scores"
     __table_args__ = (
@@ -344,7 +353,8 @@ class StockRuleScore(Base):
             "ts_code",
             "trade_date_as_of",
             "rule_version",
-            name="uq_stock_rule_scores",
+            "market",
+            name="uq_stock_rule_scores_market",
         ),
         Index(
             "ix_stock_rule_scores_date_composite",
@@ -358,6 +368,7 @@ class StockRuleScore(Base):
     name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     trade_date_as_of: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
     rule_version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     tech_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     composite_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     verdict: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
@@ -380,6 +391,7 @@ class PickRun(Base):
     run_kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     trade_date_as_of: Mapped[Optional[Date]] = mapped_column(Date, nullable=True, index=True)
     rule_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     llm_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     llm_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     symbol_query: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
@@ -405,6 +417,7 @@ class PickEntry(Base):
     )
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     rank_in_run: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     rule_tech_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     rule_composite_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -479,6 +492,7 @@ class PickLlmEvaluation(Base):
     run_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     rank_in_run: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     as_of_date: Mapped[Optional[Date]] = mapped_column(Date, nullable=True)
     horizon_days: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     verdict: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
@@ -496,6 +510,122 @@ class PickLlmEvaluation(Base):
     )
 
 
+class PatternEvent(Base):
+    """模式学习标签 — 历史极值点及其未来走势分类。
+
+    每个 (ts_code, event_date, event_type, horizon_days, market) 唯一。
+    """
+
+    __tablename__ = "pattern_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "ts_code", "event_date", "event_type", "horizon_days", "market",
+            name="uq_pattern_events_market",
+        ),
+        Index("ix_pattern_events_label", "label"),
+        Index("ix_pattern_events_ts_code", "ts_code"),
+        Index("ix_pattern_events_date", "event_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    event_date: Mapped[Date] = mapped_column(Date, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    formation_start: Mapped[Optional[Date]] = mapped_column(Date, nullable=True)
+    horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    label_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    runup_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    forward_return: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    close_at_event: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    atr_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    horizon_end_date: Mapped[Optional[Date]] = mapped_column(Date, nullable=True)
+    extra_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class PatternPrediction(Base):
+    """模式模型推理结果 — 每票每日的模式判断快照。"""
+
+    __tablename__ = "pattern_predictions"
+    __table_args__ = (
+        UniqueConstraint(
+            "ts_code", "trade_date", "model_version", "approach", "market",
+            name="uq_pattern_predictions_market",
+        ),
+        Index("ix_pattern_predictions_date", "trade_date"),
+        Index("ix_pattern_predictions_class", "pattern_class"),
+        Index("ix_pattern_predictions_model", "model_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    trade_date: Mapped[Date] = mapped_column(Date, nullable=False)
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    approach: Mapped[str] = mapped_column(String(8), nullable=False)
+    event_type: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    pattern_class: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    pattern_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    proba_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    features_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    formation_start: Mapped[Optional[Date]] = mapped_column(Date, nullable=True)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class AhCrossRef(Base):
+    """A+H 股跨市场对照表（同一公司在两个市场上市）。"""
+
+    __tablename__ = "ah_cross_ref"
+    __table_args__ = (
+        UniqueConstraint("a_code", "hk_code", name="uq_ah_pair"),
+        Index("ix_ah_a_code", "a_code"),
+        Index("ix_ah_hk_code", "hk_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    a_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    a_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    hk_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    hk_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 最新 AH 溢价（H 股相对 A 股，%）：正 = H 股溢价，负 = A 股溢价
+    ah_premium_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    a_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    hk_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    premium_as_of: Mapped[Optional[Date]] = mapped_column(Date, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class ChatHistory(Base):
+    """企微/微信对话历史记录 — 用于回复质量审计与持续优化。"""
+
+    __tablename__ = "chat_history"
+    __table_args__ = (
+        Index("ix_chat_history_created", "created_at_utc"),
+        Index("ix_chat_history_channel_intent", "channel", "bot_intent"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    chat_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    user_message: Mapped[str] = mapped_column(Text, nullable=False)
+    bot_intent: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    bot_reply: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    elapsed_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+
+
 engine = build_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
@@ -505,6 +635,10 @@ def init_db() -> None:
     _migrate_daily_prices_phase_a()
     _migrate_financial_indicators_phase_d()
     _migrate_pick_entries_predictions()
+    _migrate_pattern_tables()
+    _migrate_chat_history()
+    _migrate_hk_market_column()
+    _migrate_ah_cross_ref()
     _ensure_sqlite_indexes()
     _ensure_news_stock_link_table()
 
@@ -558,6 +692,10 @@ def _migrate_daily_prices_phase_a() -> None:
 
 
 
+def _migrate_pattern_tables() -> None:
+    """预留：形态识别表迁移（Phase E）。当前无操作。"""
+
+
 def _migrate_pick_entries_predictions() -> None:
     """pick_entries 补预测价列（已有库兼容）。"""
     url = str(engine.url)
@@ -608,6 +746,145 @@ def _migrate_financial_indicators_phase_d() -> None:
         )
 
 
+def _migrate_pattern_tables() -> None:
+    """Phase E：pattern_events / pattern_predictions 表（模式学习）。
+
+    create_all 对新库直接建表；此函数为旧库补建。
+    """
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing_tables = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "pattern_events" not in existing_tables:
+            conn.execute(
+                text(
+                    """CREATE TABLE pattern_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts_code VARCHAR(16) NOT NULL,
+                        event_date DATE NOT NULL,
+                        event_type VARCHAR(8) NOT NULL,
+                        formation_start DATE,
+                        horizon_days INTEGER NOT NULL,
+                        label VARCHAR(20),
+                        label_confidence FLOAT,
+                        runup_pct FLOAT,
+                        forward_return FLOAT,
+                        close_at_event FLOAT,
+                        atr_pct FLOAT,
+                        horizon_end_date DATE,
+                        extra_json TEXT,
+                        created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+                        UNIQUE(ts_code, event_date, event_type, horizon_days)
+                    )"""
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_pattern_events_label "
+                    "ON pattern_events (label)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_pattern_events_ts_code "
+                    "ON pattern_events (ts_code)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_pattern_events_date "
+                    "ON pattern_events (event_date)"
+                )
+            )
+        if "pattern_predictions" not in existing_tables:
+            conn.execute(
+                text(
+                    """CREATE TABLE pattern_predictions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts_code VARCHAR(16) NOT NULL,
+                        trade_date DATE NOT NULL,
+                        model_version VARCHAR(32) NOT NULL,
+                        approach VARCHAR(8) NOT NULL,
+                        event_type VARCHAR(8),
+                        pattern_class VARCHAR(20),
+                        pattern_score FLOAT,
+                        proba_json TEXT,
+                        features_json TEXT,
+                        formation_start DATE,
+                        created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+                        UNIQUE(ts_code, trade_date, model_version, approach)
+                    )"""
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_pattern_predictions_date "
+                    "ON pattern_predictions (trade_date)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_pattern_predictions_class "
+                    "ON pattern_predictions (pattern_class)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_pattern_predictions_model "
+                    "ON pattern_predictions (model_version)"
+                )
+            )
+
+
+def _migrate_chat_history() -> None:
+    """已有库补建 chat_history 表（create_all 对新库直接建表）。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "chat_history" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE chat_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        channel VARCHAR(32) NOT NULL DEFAULT 'unknown',
+                        user_id VARCHAR(128),
+                        chat_id VARCHAR(128),
+                        user_message TEXT NOT NULL,
+                        bot_intent VARCHAR(32),
+                        bot_reply TEXT,
+                        error TEXT,
+                        elapsed_ms INTEGER,
+                        created_at_utc DATETIME NOT NULL DEFAULT (datetime('now'))
+                    )"""
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_chat_history_created "
+                    "ON chat_history (created_at_utc)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_chat_history_channel_intent "
+                    "ON chat_history (channel, bot_intent)"
+                )
+            )
+
+
 def _ensure_sqlite_indexes() -> None:
     """已有库上补建索引（create_all 不会改旧表结构）。"""
     url = str(engine.url)
@@ -637,3 +914,180 @@ def _ensure_news_stock_link_table() -> None:
                 conn.execute(text(sql))
             except Exception:
                 pass
+
+
+def _migrate_hk_market_column() -> None:
+    """港股支持：已有库补 ``market`` 列（默认 'a'），并更新唯一约束。
+
+    所有带 ``market`` 列的表均在此迁移中处理。
+    """
+    url = str(engine.url)
+
+    # 需要补 market 列的表 → (表名, 列类型)
+    tables_with_market: list[tuple[str, str]] = [
+        ("stock_list", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("daily_prices", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("daily_features", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("daily_snapshot", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("financial_indicators", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("news_stock_link", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("stock_concept_members", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("pick_watchlist", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("stock_rule_scores", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("pick_runs", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("pick_entries", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("pick_llm_evaluations", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("pattern_events", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+        ("pattern_predictions", "VARCHAR(8) NOT NULL DEFAULT 'a'"),
+    ]
+
+    # 旧约束名 → 新约束名（用于重建唯一索引）
+    constraint_rename_map = {
+        "uq_ts_trade_date": ("daily_prices", "uq_ts_trade_date_market",
+                              "ts_code, trade_date", "ts_code, trade_date, market"),
+        "uq_daily_features_ts_date": ("daily_features", "uq_daily_features_ts_date_market",
+                                       "ts_code, trade_date", "ts_code, trade_date, market"),
+        "uq_snapshot_ts_date": ("daily_snapshot", "uq_snapshot_ts_date_market",
+                                 "ts_code, trade_date", "ts_code, trade_date, market"),
+        "uq_fi_ts_report": ("financial_indicators", "uq_fi_ts_report_market",
+                             "ts_code, report_date", "ts_code, report_date, market"),
+        "uq_stock_concept_member": ("stock_concept_members", "uq_stock_concept_member_market",
+                                     "concept_name, ts_code", "concept_name, ts_code, market"),
+        "uq_pick_watchlist_ts_code": ("pick_watchlist", "uq_pick_watchlist_ts_market",
+                                       "ts_code", "ts_code, market"),
+        "uq_stock_rule_scores": ("stock_rule_scores", "uq_stock_rule_scores_market",
+                                  "ts_code, trade_date_as_of, rule_version",
+                                  "ts_code, trade_date_as_of, rule_version, market"),
+        "uq_news_stock_link": ("news_stock_link", "uq_news_stock_link_market",
+                                "news_source, news_id, ts_code",
+                                "news_source, news_id, ts_code, market"),
+        "uq_pattern_events": ("pattern_events", "uq_pattern_events_market",
+                               "ts_code, event_date, event_type, horizon_days",
+                               "ts_code, event_date, event_type, horizon_days, market"),
+        "uq_pattern_predictions": ("pattern_predictions", "uq_pattern_predictions_market",
+                                    "ts_code, trade_date, model_version, approach",
+                                    "ts_code, trade_date, model_version, approach, market"),
+    }
+
+    if url.startswith("sqlite"):
+        with engine.begin() as conn:
+            # 1) 补列
+            for table_name, col_ddl in tables_with_market:
+                try:
+                    existing_cols = {
+                        row[1]
+                        for row in conn.execute(
+                            text(f"PRAGMA table_info({table_name})")
+                        ).fetchall()
+                    }
+                except Exception:
+                    continue  # 表不存在则跳过
+                if "market" not in existing_cols:
+                    try:
+                        conn.execute(
+                            text(f"ALTER TABLE {table_name} ADD COLUMN market {col_ddl}")
+                        )
+                    except Exception:
+                        pass
+
+            # 2) 更新唯一约束：删旧索引，建新索引
+            existing_indexes = {
+                row[1]
+                for row in conn.execute(
+                    text("SELECT type, name FROM sqlite_master WHERE type='index'")
+                ).fetchall()
+            }
+            for old_name, (table, new_name, old_cols, new_cols) in constraint_rename_map.items():
+                if old_name in existing_indexes:
+                    try:
+                        conn.execute(text(f"DROP INDEX IF EXISTS {old_name}"))
+                    except Exception:
+                        pass
+                if new_name not in existing_indexes:
+                    try:
+                        conn.execute(
+                            text(
+                                f"CREATE UNIQUE INDEX IF NOT EXISTS {new_name} "
+                                f"ON {table} ({new_cols})"
+                            )
+                        )
+                    except Exception:
+                        pass
+        return
+
+    if url.startswith("postgresql"):
+        with engine.begin() as conn:
+            for table_name, _col_ddl in tables_with_market:
+                pg_col_type = "VARCHAR(8) NOT NULL DEFAULT 'a'"
+                try:
+                    existing_cols = {
+                        row[0]
+                        for row in conn.execute(
+                            text(
+                                "SELECT column_name FROM information_schema.columns "
+                                f"WHERE table_name = '{table_name}'"
+                            )
+                        ).fetchall()
+                    }
+                except Exception:
+                    continue
+                if "market" not in existing_cols:
+                    try:
+                        conn.execute(
+                            text(
+                                f"ALTER TABLE {table_name} ADD COLUMN market {pg_col_type}"
+                            )
+                        )
+                    except Exception:
+                        pass
+
+            for old_name, (table, new_name, old_cols, new_cols) in constraint_rename_map.items():
+                try:
+                    conn.execute(
+                        text(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {old_name}")
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE {table} ADD CONSTRAINT {new_name} "
+                            f"UNIQUE ({new_cols})"
+                        )
+                    )
+                except Exception:
+                    pass
+
+
+def _migrate_ah_cross_ref() -> None:
+    """SQLite 旧库补建 ah_cross_ref 表。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "ah_cross_ref" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE ah_cross_ref (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        a_code VARCHAR(16) NOT NULL,
+                        a_name VARCHAR(64) NOT NULL,
+                        hk_code VARCHAR(16) NOT NULL,
+                        hk_name VARCHAR(64) NOT NULL,
+                        ah_premium_pct FLOAT,
+                        a_close FLOAT,
+                        hk_close FLOAT,
+                        premium_as_of DATE,
+                        updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+                        UNIQUE(a_code, hk_code)
+                    )"""
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ah_a_code ON ah_cross_ref (a_code)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ah_hk_code ON ah_cross_ref (hk_code)"))

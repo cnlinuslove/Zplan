@@ -97,6 +97,18 @@ def fetch_em_northbound_daily_factors_df(max_rows: int = 120) -> pd.DataFrame:
         for c in raw.columns
         if c != "日期" and pd.api.types.is_numeric_dtype(raw[c])  # type: ignore[attr-defined]
     ]
+    # 检测关键字段 NaN 占比，防止 API 静默停更（如 2025-10 起东财北向资金关键字段全部 NaN）
+    _critical_metrics = {"当日成交净买额", "当日资金流入", "买入成交额", "卖出成交额"}
+    for cm in _critical_metrics:
+        if cm in raw.columns:
+            col_data = raw[cm].tail(60)  # 近 60 个交易日
+            nan_ratio = col_data.isna().mean()
+            if nan_ratio > 0.8:
+                logger.warning(
+                    "北向资金 %s 近 60 行 NaN 占比 %.0f%%，API 可能已停更该字段",
+                    cm,
+                    nan_ratio * 100,
+                )
     rows: list[dict] = []
     for _, r in raw.iterrows():
         d_raw = r.get("日期")

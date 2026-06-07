@@ -1,0 +1,391 @@
+{
+  "ok": true,
+  "run_id": 27,
+  "run_kind": "scan",
+  "trade_date_as_of": "2026-06-05",
+  "top_n": 10,
+  "horizon_days": 5,
+  "summary": {
+    "total": 10,
+    "fail": 10,
+    "pass": 0,
+    "pending": 0,
+    "fail_rate": 1.0
+  },
+  "tag_counts": {
+    "near_60d_high": 10,
+    "buy_unreachable": 10,
+    "no_forward_data": 10
+  },
+  "entries": [
+    {
+      "entry_id": 661,
+      "run_id": 27,
+      "rank": 1,
+      "ts_code": "920111",
+      "name": "聚星科技",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 73.3,
+      "rule_score": 73.3,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": -5.9343,
+      "close_vs_buy_gap_pct": 20.9368,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "题材库覆盖7个概念，但近期回撤-5.93%，20日跌幅较大，技术信号提示均线多头但回撤低吸，注意追高风险。",
+      "recommendation": "观望",
+      "predicted_buy": 28.18,
+      "close_at_pick": 34.08
+    },
+    {
+      "entry_id": 662,
+      "run_id": 27,
+      "rank": 2,
+      "ts_code": "603039",
+      "name": "泛微网络",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 72.0,
+      "rule_score": 77.5,
+      "score_delta": -5.5,
+      "ret_20d_at_pick": -1.2608,
+      "close_vs_buy_gap_pct": 12.191,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "AI应用题材，股价距60日高点93.6%，高位回落；ret_20d=-1.3%，缩量横盘，信号提示低吸区。",
+      "recommendation": "观望",
+      "predicted_buy": 35.6,
+      "close_at_pick": 39.94
+    },
+    {
+      "entry_id": 663,
+      "run_id": 27,
+      "rank": 3,
+      "ts_code": "002319",
+      "name": "乐通股份",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 70.9,
+      "rule_score": 75.9,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 0.5029,
+      "close_vs_buy_gap_pct": 8.018,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "20日涨幅50.29%，追高风险极高；量比0.67缩量上涨，量价背离；RSI未提供但KDJ金叉。",
+      "recommendation": "谨慎/回避",
+      "predicted_buy": 11.1,
+      "close_at_pick": 11.99
+    },
+    {
+      "entry_id": 664,
+      "run_id": 27,
+      "rank": 4,
+      "ts_code": "000823",
+      "name": "超声电子",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 70.9,
+      "rule_score": 75.9,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 1.3234,
+      "close_vs_buy_gap_pct": 16.0079,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "题材库覆盖8个概念，但股价接近60日高点(96.9%)，追高风险显著，ret_20d仅1.3%涨幅有限。",
+      "recommendation": "观望",
+      "predicted_buy": 15.18,
+      "close_at_pick": 17.61
+    },
+    {
+      "entry_id": 665,
+      "run_id": 27,
+      "rank": 5,
+      "ts_code": "601100",
+      "name": "恒立液压",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 70.4,
+      "rule_score": 75.4,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 3.3419,
+      "close_vs_buy_gap_pct": 8.3182,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "工程机械题材，20日涨幅3.34%，股价接近60日高点97.26%，追高风险显著，量比1.0以下缩量，量价背离。",
+      "recommendation": "观望",
+      "predicted_buy": 108.1997,
+      "close_at_pick": 117.2
+    },
+    {
+      "entry_id": 666,
+      "run_id": 27,
+      "rank": 6,
+      "ts_code": "300913",
+      "name": "兆龙互连",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 70.2,
+      "rule_score": 70.2,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": 4.1489,
+      "close_vs_buy_gap_pct": 23.9837,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "题材库覆盖8概念，20日涨4.15%，近60日高点91.8%，追高风险显著，量比未放量，建议观望。",
+      "recommendation": "观望",
+      "predicted_buy": 49.2,
+      "close_at_pick": 61.0
+    },
+    {
+      "entry_id": 667,
+      "run_id": 27,
+      "rank": 7,
+      "ts_code": "300752",
+      "name": "隆利科技",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 70.0,
+      "rule_score": 75.0,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 6.8798,
+      "close_vs_buy_gap_pct": 14.5197,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "20日涨幅6.9%，接近60日新高(98.3%)，追高风险显著，量价未背离但不宜追涨。",
+      "recommendation": "观望",
+      "predicted_buy": 13.43,
+      "close_at_pick": 15.38
+    },
+    {
+      "entry_id": 668,
+      "run_id": 27,
+      "rank": 8,
+      "ts_code": "920981",
+      "name": "晶赛科技",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 69.9,
+      "rule_score": 74.9,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 3.2156,
+      "close_vs_buy_gap_pct": 25.9138,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "题材+光刻机/华为概念，20日涨3.22%但量比0.9缩量，量价背离，追高风险。",
+      "recommendation": "观望",
+      "predicted_buy": 33.65,
+      "close_at_pick": 42.37
+    },
+    {
+      "entry_id": 669,
+      "run_id": 27,
+      "rank": 9,
+      "ts_code": "300040",
+      "name": "九洲集团",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 69.7,
+      "rule_score": 69.7,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": 2.6702,
+      "close_vs_buy_gap_pct": 11.1272,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "题材库覆盖8概念，但无近期资讯催化；ret_20d=2.67%涨幅温和，vol_ratio20未达1.3，无放量确认；close_vs_buy_gap=11.13%偏离较大，追高受限。",
+      "recommendation": "观望",
+      "predicted_buy": 6.92,
+      "close_at_pick": 7.69
+    },
+    {
+      "entry_id": 670,
+      "run_id": 27,
+      "rank": 10,
+      "ts_code": "300321",
+      "name": "同大股份",
+      "as_of_date": "2026-06-05",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 69.4,
+      "rule_score": 74.4,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 1.4585,
+      "close_vs_buy_gap_pct": 16.5445,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "near_60d_high",
+        "buy_unreachable",
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "题材：化学制品+央国企改革；ret_20d=1.46%涨幅温和，vol_ratio20未达1.3，高60日位置93.8%追高风险，信号均线多头但无放量确认。",
+      "recommendation": "观望",
+      "predicted_buy": 38.2,
+      "close_at_pick": 44.52
+    }
+  ],
+  "optimization": {
+    "where_to_change": {
+      "prompt": [
+        "深度研报 prompt：buy_price 不得高于 close*0.99；须说明与 suggested_buy 关系",
+        "简评 prompt：high_60d_pct>0.9 时须提示「接近阶段高点」，降分或观望"
+      ],
+      "strategy_yaml": [
+        "technical.suggested_price_levels：MA20 折扣由 0.98 调至 0.96，或增加「可成交价」字段"
+      ],
+      "rule_engine_code": [
+        "technical：high_60d_pct>0.92 时 tech_score -= 8"
+      ]
+    },
+    "priority": [
+      [
+        "near_60d_high",
+        10
+      ],
+      [
+        "buy_unreachable",
+        10
+      ],
+      [
+        "no_forward_data",
+        10
+      ]
+    ],
+    "review_actions": [
+      {
+        "id": "1",
+        "layer": "strategy",
+        "file": "zplan-选股/config/strategy.yaml → ranking",
+        "action": "试 ranking.mode=blend 且 llm_weight 0.8；或 prompt 要求 close_vs_buy_gap 大时降分",
+        "why": "buy_unreachable=10"
+      },
+      {
+        "id": "2",
+        "layer": "rule_engine",
+        "file": "zplan-共享/src/zplan_shared/features.py → suggested_price_levels",
+        "action": "MA20 折扣 0.98→0.96，或增加 actionable_price≈close 供 LLM 参考",
+        "why": "建议买价系统性低于现价，导致「买不到」"
+      },
+      {
+        "id": "3",
+        "layer": "strategy",
+        "file": "zplan-选股/config/strategy.yaml → ranking",
+        "action": "确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight",
+        "why": "最终 Top 应由 LLM 分排序，规则只做候选池与约束"
+      },
+      {
+        "id": "4",
+        "layer": "workflow",
+        "file": "重跑 llm-top → llm-eval",
+        "action": "改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate",
+        "why": "旧 run 不会自动应用新 prompt"
+      }
+    ]
+  },
+  "markdown": "# LLM Top10 回测诊断（run_id=27，as_of=2026-06-05）\n\n- 样本：**10** | 失败 **10** | 通过 **0** | 待验证 **0**\n- 失败率：**100%**\n\n## 失败标签统计\n- `near_60d_high`（接近60日阶段高点）：**10** 次\n- `buy_unreachable`（收盘价远高于建议买价，短期难回踩成交）：**10** 次\n- `no_forward_data`（尚无足够后续 K 线）：**10** 次\n\n## 逐只明细\n- **#1 聚星科技 (920111)** verdict=fail | LLM 73.3 vs 规则 73.3 | ret20=-5.9343% | 收盘/买价 gap=20.9368% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：题材库覆盖7个概念，但近期回撤-5.93%，20日跌幅较大，技术信号提示均线多头但回撤低吸，注意追高风险。\n- **#2 泛微网络 (603039)** verdict=fail | LLM 72.0 vs 规则 77.5 | ret20=-1.2608% | 收盘/买价 gap=12.191% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：AI应用题材，股价距60日高点93.6%，高位回落；ret_20d=-1.3%，缩量横盘，信号提示低吸区。\n- **#3 乐通股份 (002319)** verdict=fail | LLM 70.9 vs 规则 75.9 | ret20=0.5029% | 收盘/买价 gap=8.018% | fwd=None%\n  - 推荐：谨慎/回避 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：20日涨幅50.29%，追高风险极高；量比0.67缩量上涨，量价背离；RSI未提供但KDJ金叉。\n- **#4 超声电子 (000823)** verdict=fail | LLM 70.9 vs 规则 75.9 | ret20=1.3234% | 收盘/买价 gap=16.0079% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：题材库覆盖8个概念，但股价接近60日高点(96.9%)，追高风险显著，ret_20d仅1.3%涨幅有限。\n- **#5 恒立液压 (601100)** verdict=fail | LLM 70.4 vs 规则 75.4 | ret20=3.3419% | 收盘/买价 gap=8.3182% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：工程机械题材，20日涨幅3.34%，股价接近60日高点97.26%，追高风险显著，量比1.0以下缩量，量价背离。\n- **#6 兆龙互连 (300913)** verdict=fail | LLM 70.2 vs 规则 70.2 | ret20=4.1489% | 收盘/买价 gap=23.9837% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：题材库覆盖8概念，20日涨4.15%，近60日高点91.8%，追高风险显著，量比未放量，建议观望。\n- **#7 隆利科技 (300752)** verdict=fail | LLM 70.0 vs 规则 75.0 | ret20=6.8798% | 收盘/买价 gap=14.5197% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：20日涨幅6.9%，接近60日新高(98.3%)，追高风险显著，量价未背离但不宜追涨。\n- **#8 晶赛科技 (920981)** verdict=fail | LLM 69.9 vs 规则 74.9 | ret20=3.2156% | 收盘/买价 gap=25.9138% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：题材+光刻机/华为概念，20日涨3.22%但量比0.9缩量，量价背离，追高风险。\n- **#9 九洲集团 (300040)** verdict=fail | LLM 69.7 vs 规则 69.7 | ret20=2.6702% | 收盘/买价 gap=11.1272% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：题材库覆盖8概念，但无近期资讯催化；ret_20d=2.67%涨幅温和，vol_ratio20未达1.3，无放量确认；close_vs_buy_gap=11.1\n- **#10 同大股份 (300321)** verdict=fail | LLM 69.4 vs 规则 74.4 | ret20=1.4585% | 收盘/买价 gap=16.5445% | fwd=None%\n  - 推荐：观望 | 标签：near_60d_high, buy_unreachable, no_forward_data\n  - LLM：题材：化学制品+央国企改革；ret_20d=1.46%涨幅温和，vol_ratio20未达1.3，高60日位置93.8%追高风险，信号均线多头但无放量确认。\n\n## 后续优化（改哪里）\n### 1. Prompt（`llm_research.py` 简评/深度）— **优先**\n- 深度研报 prompt：buy_price 不得高于 close*0.99；须说明与 suggested_buy 关系\n- 简评 prompt：high_60d_pct>0.9 时须提示「接近阶段高点」，降分或观望\n### 2. strategy.yaml（规则过滤，不耗 API）\n- technical.suggested_price_levels：MA20 折扣由 0.98 调至 0.96，或增加「可成交价」字段\n### 3. 规则引擎代码（`technical.py` / `scanner.py`）\n- technical：high_60d_pct>0.92 时 tech_score -= 8\n\n## 请你 Review（可勾选后改配置）\n\n| # | 层级 | 文件 | 建议动作 | 原因 |\n|---|------|------|----------|------|\n| 1 | strategy | `zplan-选股/config/strategy.yaml → ranking` | 试 ranking.mode=blend 且 llm_weight 0.8；或 prompt 要求 close_vs_buy_gap 大时降分 | buy_unreachable=10 |\n| 2 | rule_engine | `zplan-共享/src/zplan_shared/features.py → suggested_price_levels` | MA20 折扣 0.98→0.96，或增加 actionable_price≈close 供 LLM 参考 | 建议买价系统性低于现价，导致「买不到」 |\n| 3 | strategy | `zplan-选股/config/strategy.yaml → ranking` | 确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight | 最终 Top 应由 LLM 分排序，规则只做候选池与约束 |\n| 4 | workflow | `重跑 llm-top → llm-eval` | 改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate | 旧 run 不会自动应用新 prompt |\n\n## 设计说明（规则 vs LLM）\n\n- **init-rule**：全市场轻量技术分（`quick_technical_score`），偏动量/多头排列，**不含**财报/资讯。\n- **llm-top deepen**：对 Top300 才算完整规则分（技术+财务+资讯+行业）。\n- **你的目标**：规则只做「候选池 + 硬约束」，**排序与推荐以 LLM 为主**（`strategy.yaml` → `ranking`）。\n- **校正闭环**：改 prompt/权重 → 重跑 llm-top → `llm-eval` → 看 fail_rate 与上表。"
+}

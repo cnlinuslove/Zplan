@@ -10,7 +10,7 @@ import feedparser
 import pandas as pd
 import requests
 
-from config import GOOGLE_RSS_HL, HTTP_USER_AGENT
+from config import GOOGLE_RSS_HL, GOOGLE_RSS_WHEN, HTTP_USER_AGENT
 from sentiment_etl.rss_title import display_source_name, split_aggregator_title
 
 logger = logging.getLogger(__name__)
@@ -42,15 +42,20 @@ def fetch_google_news_rss_df(
     """
     Google News RSS（feedparser）-> 标准 DataFrame。
     列: published_at_utc, title, article_url, rss_keyword, source_name（从标题解析的媒体，如东方财富）
+
+    通过 GOOGLE_RSS_WHEN 追加 Google News 时间过滤（如 ``when:24h``），
+    减少跨窗口重复文章，提升 inserted/fetched 比。
     """
     hl_use = hl or GOOGLE_RSS_HL
     headers = {"User-Agent": HTTP_USER_AGENT}
+    when_suffix = f" when:{GOOGLE_RSS_WHEN}" if GOOGLE_RSS_WHEN else ""
     rows: list[dict] = []
     for kw in keywords:
         q = str(kw).strip()
         if not q:
             continue
-        url = _GOOGLE_RSS_TMPL.format(q=urllib.parse.quote_plus(q), hl=urllib.parse.quote_plus(hl_use))
+        q_with_when = f"{q}{when_suffix}"
+        url = _GOOGLE_RSS_TMPL.format(q=urllib.parse.quote_plus(q_with_when), hl=urllib.parse.quote_plus(hl_use))
         try:
             resp = requests.get(url, headers=headers, timeout=timeout_seconds)
             resp.raise_for_status()

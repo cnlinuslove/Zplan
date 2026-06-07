@@ -4,7 +4,7 @@
  * 与 OpenClaw 的 wecom 渠道不能同时占用同一 Bot ID，运行前请 stop gateway。
  */
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,15 +53,25 @@ function parseZplanJson(blob) {
   throw new Error("no json object in output");
 }
 
-function runZplanReply(userText, childEnv) {
+/**
+ * 调用 Python openclaw_bridge.py wechat-reply
+ * @returns {{text: string, templateCard: object|null}}
+ */
+function runZplanReply(userText, childEnv, { userId, chatId, mentioned } = {}) {
   const py = join(ROOT, ".venv/bin/python");
   const timeoutMs = Number(process.env.WECOM_REPLY_TIMEOUT_MS || 120_000);
+  const args = ["openclaw_bridge.py", "wechat-reply", "--text", userText, "--channel", "wecom_bot"];
+  if (userId) args.push("--user-id", userId);
+  if (chatId) args.push("--chat-id", chatId);
+  if (mentioned) args.push("--mentioned");
   return new Promise((resolve, reject) => {
     const proc = spawn(
       py,
-      ["openclaw_bridge.py", "wechat-reply", "--text", userText],
+      args,
       { cwd: ROOT, env: childEnv },
     );
+    proc.stdout.setEncoding("utf8");
+    proc.stderr.setEncoding("utf8");
     let out = "";
     let err = "";
     let settled = false;
@@ -86,13 +96,16 @@ function runZplanReply(userText, childEnv) {
       err += d;
     });
     proc.on("close", (code) => {
-      const blob = (out || err).trim();
+      if (err.trim()) {
+        console.error(`[wecom-zplan] stderr (exit ${code}):`, err.slice(0, 500));
+      }
+      const blob = out.trim();
       if (!blob) {
-        finish(reject, new Error(`zplan exit ${code}, no output`));
+        finish(reject, new Error(`zplan exit ${code}, no output${err ? `; stderr: ${err.slice(0, 200)}` : ""}`));
         return;
       }
       try {
-        const data = parseZplanJson(out || err);
+        const data = parseZplanJson(out);
         if (!data.ok) {
           finish(
             reject,
@@ -100,12 +113,25 @@ function runZplanReply(userText, childEnv) {
           );
           return;
         }
-        finish(
-          resolve,
-          String(data.reply_text || data.reply_markdown || "（无回复内容）").slice(0, 1800),
-        );
+        finish(resolve, {
+          text: String(data.reply_text || data.reply_markdown || "（无回复内容）").slice(0, 1800),
+          templateCard: data.reply_template_card || null,
+          pdfPath: data.pdf_path || null,
+        });
       } catch (e) {
-        finish(reject, new Error(`parse zplan json failed: ${(out || err).slice(0, 300)}`));
+        const outLen = out.length;
+        const head = out.slice(0, 200);
+        const tail = out.slice(-200);
+        console.error(
+          `[wecom-zplan] JSON parse error: ${e.message}`,
+          `| out.length=${outLen} | head=[${head}] | tail=[${tail}]`,
+        );
+        finish(
+          reject,
+          new Error(
+            `parse zplan json failed (len=${outLen}, ${e.message.slice(0, 80)}): ${out.slice(0, 200)}`,
+          ),
+        );
       }
     });
   });
@@ -141,6 +167,71 @@ function buildChildEnv() {
 function makeStreamId() {
   return `stream_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
+
+// ── 模板卡片按钮事件处理 ──────────────────────────────
+
+/**
+ * 解析按钮 event_key → {action, tsCode, name}
+ * key 格式: "analyze|300058|蓝色光标" / "news|300058|蓝色光标" / "picklist" / "picklist_analyze"
+ */
+function parseButtonKey(eventKey) {
+  if (!eventKey) return null;
+  const parts = eventKey.split("|");
+  return { action: parts[0], tsCode: parts[1] || null, name: parts[2] || null };
+}
+
+/**
+ * 处理按钮点击：调用 Python 后端并流式返回结果。
+ */
+async function handleButtonClick(ws, frame, eventKey, streamId, childEnv) {
+  const parsed = parseButtonKey(eventKey);
+  if (!parsed) return;
+
+  const { action, tsCode, name } = parsed;
+  const userId = frame?.body?.from?.userid || frame?.body?.from_userid || "";
+  const chatId = frame?.body?.chatid || "";
+  const ctx = { userId, chatId };
+
+  if (action === "analyze" && tsCode) {
+    await ws.replyStream(frame, streamId, `正在分析 ${name || tsCode}，请稍候…`, false);
+    try {
+      const { text } = await runZplanReply(`分析 ${name || tsCode}`, childEnv, { ...ctx, mentioned: true });
+      await ws.replyStream(frame, streamId, text, true);
+      console.log(`[wecom-zplan] 按钮-分析 ${tsCode} 完成 (${text.length} 字)`);
+    } catch (e) {
+      const msg = `分析失败：${e?.message || e}`;
+      await ws.replyStream(frame, streamId, msg.slice(0, 500), true);
+    }
+  } else if (action === "news" && tsCode) {
+    await ws.replyStream(frame, streamId, `正在查询 ${name || tsCode} 最新快讯…`, false);
+    try {
+      const { text } = await runZplanReply(`${tsCode} 新闻`, childEnv, { ...ctx, mentioned: true });
+      await ws.replyStream(frame, streamId, text, true);
+      console.log(`[wecom-zplan] 按钮-快讯 ${tsCode} 完成 (${text.length} 字)`);
+    } catch (e) {
+      const msg = `查询失败：${e?.message || e}`;
+      await ws.replyStream(frame, streamId, msg.slice(0, 500), true);
+    }
+  } else if (action === "picklist") {
+    await ws.replyStream(frame, streamId, "正在生成选股清单…", false);
+    try {
+      const { text } = await runZplanReply("选股清单", childEnv, { ...ctx, mentioned: true });
+      await ws.replyStream(frame, streamId, text, true);
+      console.log(`[wecom-zplan] 按钮-选股清单 完成 (${text.length} 字)`);
+    } catch (e) {
+      const msg = `查询失败：${e?.message || e}`;
+      await ws.replyStream(frame, streamId, msg.slice(0, 500), true);
+    }
+  } else if (action === "picklist_analyze") {
+    await ws.replyStream(
+      frame, streamId,
+      "请直接发送股票名称或代码，例如「爱普股份」或「603020」",
+      true,
+    );
+  }
+}
+
+// ── 主入口 ─────────────────────────────────────────────
 
 async function main() {
   loadEnv(join(ROOT, ".env"));
@@ -184,6 +275,7 @@ async function main() {
     console.log("[wecom-zplan] 已连接企微，等待消息…（@机器人 发「帮助」测试）");
   });
 
+  // ── 文本消息 ──
   ws.on("message.text", (frame) => {
     const raw = frame?.body?.text?.content || "";
     const query = stripMention(raw);
@@ -192,6 +284,9 @@ async function main() {
     const msgId = frame?.body?.msgid || frame?.header?.req_id || makeStreamId();
     if (inFlight.has(msgId)) return;
     inFlight.add(msgId);
+
+    const userId = frame?.body?.from?.userid || frame?.body?.from_userid || "";
+    const chatId = frame?.body?.chatid || "";
 
     console.log(`[wecom-zplan] 收到: ${query.slice(0, 80)} (并行 ${inFlight.size})`);
 
@@ -202,9 +297,39 @@ async function main() {
         if (!isFast) {
           await ws.replyStream(frame, streamId, "正在检索资讯，请稍候…", false);
         }
-        const reply = await runZplanReply(query, childEnv);
-        await ws.replyStream(frame, streamId, reply, true);
-        console.log(`[wecom-zplan] 已回复 ${reply.length} 字`);
+        // 智能机器人仅接收 @ 消息，mentioned 始终为 true
+        const { text, templateCard, pdfPath } = await runZplanReply(query, childEnv, { userId, chatId, mentioned: true });
+
+        if (templateCard && ws.replyStreamWithCard) {
+          // 有模板卡片：文本 + 按钮卡片一起发送
+          await ws.replyStreamWithCard(frame, streamId, text, true, {
+            templateCard,
+          });
+          console.log(`[wecom-zplan] 已回复 ${text.length} 字 + 卡片`);
+        } else {
+          await ws.replyStream(frame, streamId, text, true);
+          console.log(`[wecom-zplan] 已回复 ${text.length} 字`);
+        }
+
+        // 发送 PDF 报告文件
+        if (pdfPath && existsSync(pdfPath)) {
+          try {
+            const fileBuffer = readFileSync(pdfPath);
+            const uploadResult = await ws.uploadMedia(fileBuffer, {
+              type: "file",
+              filename: pdfPath.split("/").pop() || "report.pdf",
+            });
+            if (uploadResult?.body?.media_id) {
+              await ws.reply(frame, {
+                msgtype: "file",
+                file: { media_id: uploadResult.body.media_id },
+              });
+              console.log(`[wecom-zplan] PDF 已发送: ${pdfPath}`);
+            }
+          } catch (e) {
+            console.error(`[wecom-zplan] PDF 发送失败: ${e.message}`);
+          }
+        }
       } catch (e) {
         const msg = `处理失败：${e?.message || e}`;
         console.error(`[wecom-zplan] ${msg}`);
@@ -217,6 +342,17 @@ async function main() {
         inFlight.delete(msgId);
       }
     })();
+  });
+
+  // ── 模板卡片按钮点击 ──
+  ws.on("template_card_event", (frame) => {
+    const eventKey = frame?.body?.event?.template_card_event?.event_key;
+    if (!eventKey) return;
+
+    console.log(`[wecom-zplan] 按钮点击: ${eventKey}`);
+
+    const streamId = generateReqId("stream");
+    void handleButtonClick(ws, frame, eventKey, streamId, childEnv);
   });
 
   ws.connect();

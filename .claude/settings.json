@@ -25,6 +25,6 @@
     "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
     "ANTHROPIC_MODEL": "deepseek-v4-pro[1m]",
     "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-flash",
-    "ZPLAN_ROOT": "${workspaceFolder}/zplan-资讯"
+    "ZPLAN_ROOT": "/Users/richard/my_stock_ai/zplan-资讯"
   }
 }

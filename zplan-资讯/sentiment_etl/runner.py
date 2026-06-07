@@ -5,7 +5,12 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from config import GOOGLE_RSS_KEYWORDS
+from config import (
+    GOOGLE_RSS_KEYWORDS,
+    SENTIMENT_STALE_DAYS_INDEX,
+    SENTIMENT_STALE_DAYS_MARGIN,
+    SENTIMENT_STALE_DAYS_NORTHBOUND,
+)
 from zplan_shared.models import init_db
 from sentiment_etl.akshare_em import (
     fetch_em_financial_flash_df,
@@ -127,8 +132,94 @@ def run_sentiment_etl(*, push_wechat: bool = True) -> dict[str, Any]:
     return stats
 
 
+def _check_data_staleness() -> list[str]:
+    """检查 market_sentiment 各 factor_kind 数据陈旧度（factor 级 + 指标级）。
+
+    - factor 级：最新 as_of_utc 是否超过阈值
+    - 指标级：关键指标（如北向资金当日成交净买额）最新非 NaN 日期是否远落后于
+      factor 最新日期（说明 API 返回了日期但关键字段全是 NaN）
+    """
+    from datetime import datetime, timezone
+
+    import pandas as pd
+    from sqlalchemy import text
+
+    from zplan_shared.models import SessionLocal
+
+    thresholds: dict[str, int] = {
+        "northbound_daily": SENTIMENT_STALE_DAYS_NORTHBOUND,
+        "northbound_intraday": SENTIMENT_STALE_DAYS_NORTHBOUND,
+        "margin_account": SENTIMENT_STALE_DAYS_MARGIN,
+        "index_turnover": SENTIMENT_STALE_DAYS_INDEX,
+    }
+    # 关键指标：如果这些指标的最新非 NaN 日期与 factor 最新日期差距超过此天数，说明 API 已停更
+    _critical_metrics: dict[str, list[str]] = {
+        "northbound_daily": ["当日成交净买额", "当日资金流入", "买入成交额"],
+        "margin_account": ["融资余额", "融资买入额"],
+    }
+    _metric_stale_days = 10  # 指标级陈旧阈值（与 factor 最新日期的差距）
+
+    now = datetime.now(timezone.utc)
+    alerts: list[str] = []
+
+    try:
+        with SessionLocal() as session:
+            for factor_kind, max_stale_days in thresholds.items():
+                # ── factor 级：最新 as_of_utc ──
+                row = session.execute(
+                    text(
+                        "SELECT MAX(as_of_utc) FROM market_sentiment WHERE factor_kind = :k"
+                    ),
+                    {"k": factor_kind},
+                ).fetchone()
+                if not row or not row[0]:
+                    continue
+                latest = pd.Timestamp(row[0])
+                if latest.tzinfo is None:
+                    latest = latest.tz_localize(timezone.utc)
+                else:
+                    latest = latest.tz_convert(timezone.utc)
+                age_days = (now - latest).total_seconds() / 86400.0
+                if age_days > max_stale_days:
+                    alerts.append(
+                        f"{factor_kind}: 最新数据 {latest.strftime('%Y-%m-%d')} "
+                        f"距今 {age_days:.0f} 天 > {max_stale_days} 天（阈值）"
+                    )
+
+                # ── 指标级：关键指标最新非 NaN 日期 ──
+                for metric_name in _critical_metrics.get(factor_kind, []):
+                    mrow = session.execute(
+                        text(
+                            "SELECT MAX(as_of_utc) FROM market_sentiment "
+                            "WHERE factor_kind = :k AND metric_name = :m "
+                            "AND metric_value IS NOT NULL"
+                        ),
+                        {"k": factor_kind, "m": metric_name},
+                    ).fetchone()
+                    if not mrow or not mrow[0]:
+                        alerts.append(
+                            f"{factor_kind}/{metric_name}: 全库无有效值，API 可能已停更该字段"
+                        )
+                        continue
+                    mlatest = pd.Timestamp(mrow[0])
+                    if mlatest.tzinfo is None:
+                        mlatest = mlatest.tz_localize(timezone.utc)
+                    else:
+                        mlatest = mlatest.tz_convert(timezone.utc)
+                    gap_days = (latest - mlatest).total_seconds() / 86400.0
+                    if gap_days > _metric_stale_days:
+                        alerts.append(
+                            f"{factor_kind}/{metric_name}: 最新有效值 {mlatest.strftime('%Y-%m-%d')}"
+                            f"，比 factor 最新日期落后 {gap_days:.0f} 天（API 可能已停更）"
+                        )
+    except Exception as exc:
+        logger.warning("数据陈旧度检查失败: %s", exc)
+
+    return alerts
+
+
 def _collect_etl_alerts(stats: dict[str, Any]) -> list[str]:
-    """监控 inserted=0 或拉取失败（P0 运维）。"""
+    """监控 inserted=0、拉取失败、数据陈旧（P0 运维）。"""
     alerts: list[str] = []
     inserted = stats.get("inserted") or {}
     fetched = stats.get("fetched") or {}
@@ -136,7 +227,12 @@ def _collect_etl_alerts(stats: dict[str, Any]) -> list[str]:
 
     for label, val in inserted.items():
         if isinstance(val, dict) and val.get("error"):
-            alerts.append(f"{label}: {str(val['error'])[:160]}")
+            err_msg = str(val["error"])[:160]
+            # 区分 SSL 错误（代理/网络问题）vs 其他
+            if "SSL" in err_msg or "SSLEOF" in err_msg:
+                alerts.append(f"🔴 {label}: SSL/代理错误，源可能不可达")
+            else:
+                alerts.append(f"🔴 {label}: {err_msg}")
             continue
         if label in skip_zero_alert:
             continue
@@ -144,19 +240,32 @@ def _collect_etl_alerts(stats: dict[str, Any]) -> list[str]:
         raw = fetched.get(label)
         n_fetch = len(raw) if isinstance(raw, pd.DataFrame) else 0
         if isinstance(raw, Exception):
-            alerts.append(f"{label}: fetch failed")
+            alerts.append(f"🔴 {label}: fetch failed")
             continue
         if n_fetch > 0 and n_ins == 0:
-            alerts.append(f"{label}: fetched={n_fetch} inserted=0（可能全重复）")
+            # 区分：拉取成功但全重复（数据源正常，去重生效）
+            alerts.append(f"🟡 {label}: fetched={n_fetch} inserted=0（可能全重复）")
         elif n_fetch == 0 and n_ins == 0:
-            alerts.append(f"{label}: fetched=0 inserted=0（源无新数据或拉取失败）")
+            alerts.append(f"🔴 {label}: fetched=0 inserted=0（源无新数据或拉取失败）")
+
+    # 数据陈旧度检查
+    staleness = _check_data_staleness()
+    if staleness:
+        for msg in staleness:
+            alerts.append(f"🔴 数据陈旧: {msg}")
 
     cov = stats.get("coverage_48h") or {}
     if isinstance(cov, dict):
         for key in ("financial_alerts_coverage_pct", "global_news_coverage_pct"):
             pct = cov.get(key)
-            if isinstance(pct, (int, float)) and pct < 5.0 and cov.get(key.replace("_coverage_pct", "_total"), 0) > 10:
-                alerts.append(f"48h {key}={pct}% 过低，请检查 news_stock_link / 简称词典")
+            if (
+                isinstance(pct, (int, float))
+                and pct < 5.0
+                and cov.get(key.replace("_coverage_pct", "_total"), 0) > 10
+            ):
+                alerts.append(
+                    f"🟡 48h {key}={pct}% 过低，请检查 news_stock_link / 简称词典"
+                )
     return alerts
 
 

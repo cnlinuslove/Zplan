@@ -1,0 +1,284 @@
+{
+  "version": "v2",
+  "created_at": "2026-06-05T16:10:13.373136Z",
+  "model_file": "v2_approach_a.lgb",
+  "approach": "方案 A: 纯图形（基线）",
+  "model_type": "LightGBM_multiclass",
+  "num_features": 47,
+  "accuracy": 0.700942587832048,
+  "auc_ovr": 0.9171,
+  "per_class": {
+    "REAL_RALLY": {
+      "precision": 0.3,
+      "recall": 0.0236,
+      "f1": 0.0437,
+      "support": 3689
+    },
+    "BULL_TRAP": {
+      "precision": 0.7684,
+      "recall": 0.9833,
+      "f1": 0.8627,
+      "support": 12309
+    },
+    "REAL_BREAKDOWN": {
+      "precision": 0.0292,
+      "recall": 0.6411,
+      "f1": 0.0559,
+      "support": 209
+    },
+    "PANIC_SHAKEOUT": {
+      "precision": 0.9902,
+      "recall": 0.6193,
+      "f1": 0.762,
+      "support": 11801
+    }
+  },
+  "upward_binary": {
+    "accuracy": 0.7694,
+    "auc": 0.5095,
+    "precision": 0.7694,
+    "recall": 1.0,
+    "f1": 0.8697,
+    "confusion": [
+      [
+        0,
+        3689
+      ],
+      [
+        0,
+        12309
+      ]
+    ],
+    "feature_importance": [
+      [
+        "body_std",
+        256.99
+      ],
+      [
+        "volatility_20d",
+        180.79
+      ],
+      [
+        "acceleration_5d",
+        137.71
+      ],
+      [
+        "body_min",
+        132.7
+      ],
+      [
+        "ret_log_kurt",
+        127.21
+      ],
+      [
+        "ret_daily_min",
+        126.2
+      ],
+      [
+        "ret_mid",
+        120.97
+      ],
+      [
+        "vol_trend",
+        114.28
+      ],
+      [
+        "ret_log_skew",
+        109.82
+      ],
+      [
+        "range_last",
+        105.94
+      ],
+      [
+        "trend_strength",
+        103.13
+      ],
+      [
+        "range_kurt",
+        102.98
+      ],
+      [
+        "price_vs_60d_low",
+        93.38
+      ],
+      [
+        "vol_ratio_std",
+        83.61
+      ],
+      [
+        "ret_early",
+        73.79
+      ],
+      [
+        "vol_ratio_min",
+        72.06
+      ],
+      [
+        "ret_log_std",
+        70.26
+      ],
+      [
+        "range_min",
+        69.91
+      ],
+      [
+        "body_kurt",
+        66.55
+      ],
+      [
+        "ret_log_max",
+        64.31
+      ]
+    ]
+  },
+  "downward_binary": {
+    "accuracy": 0.9826,
+    "auc": 0.6206,
+    "precision": 0.9826,
+    "recall": 1.0,
+    "f1": 0.9912,
+    "confusion": [
+      [
+        0,
+        209
+      ],
+      [
+        0,
+        11801
+      ]
+    ],
+    "feature_importance": [
+      [
+        "range_last",
+        1682.24
+      ],
+      [
+        "ret_early",
+        337.1
+      ],
+      [
+        "range_std",
+        136.71
+      ],
+      [
+        "acceleration_5d",
+        123.73
+      ],
+      [
+        "volatility_20d",
+        81.35
+      ],
+      [
+        "range_skew",
+        70.45
+      ],
+      [
+        "vol_ratio_min",
+        55.09
+      ],
+      [
+        "vol_ratio_mean",
+        53.2
+      ],
+      [
+        "range_mean",
+        39.55
+      ],
+      [
+        "vol_ratio_last",
+        31.46
+      ],
+      [
+        "body_kurt",
+        28.78
+      ],
+      [
+        "ret_daily_mean",
+        27.32
+      ],
+      [
+        "ret_log_skew",
+        24.49
+      ],
+      [
+        "body_max",
+        23.44
+      ],
+      [
+        "vol_trend",
+        21.46
+      ],
+      [
+        "vol_ratio_std",
+        21.17
+      ],
+      [
+        "price_vs_60d_high",
+        19.93
+      ],
+      [
+        "vol_ratio_kurt",
+        19.13
+      ],
+      [
+        "ret_daily_std",
+        0.0
+      ],
+      [
+        "ret_daily_min",
+        0.0
+      ]
+    ]
+  },
+  "training_range": "train~2024-06, val~2025-01, test~2025-08 (前瞻验证)",
+  "feature_names": [
+    "ret_daily_mean",
+    "ret_daily_std",
+    "ret_daily_min",
+    "ret_daily_max",
+    "ret_daily_skew",
+    "ret_daily_kurt",
+    "ret_log_mean",
+    "ret_log_std",
+    "ret_log_min",
+    "ret_log_max",
+    "ret_log_skew",
+    "ret_log_kurt",
+    "ret_cum_60d",
+    "ret_early",
+    "ret_mid",
+    "ret_late",
+    "price_vs_60d_high",
+    "price_vs_60d_low",
+    "drawdown_60d",
+    "runup_60d",
+    "volatility_20d",
+    "volatility_60d",
+    "vol_ratio_mean",
+    "vol_ratio_std",
+    "vol_ratio_min",
+    "vol_ratio_max",
+    "vol_ratio_skew",
+    "vol_ratio_kurt",
+    "vol_ratio_last",
+    "vol_trend",
+    "range_mean",
+    "range_std",
+    "range_min",
+    "range_max",
+    "range_skew",
+    "range_kurt",
+    "range_last",
+    "body_mean",
+    "body_std",
+    "body_min",
+    "body_max",
+    "body_skew",
+    "body_kurt",
+    "body_last",
+    "trend_strength",
+    "price_monotonicity",
+    "acceleration_5d"
+  ]
+}

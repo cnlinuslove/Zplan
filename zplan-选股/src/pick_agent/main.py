@@ -217,7 +217,7 @@ def run_pick_agent(
             if est:
                 result["llm_cost_estimate"] = est.to_dict()
     elif scan_llm and not gemini_available():
-        result["llm_scan_brief_skipped"] = "GEMINI_API_KEY 未配置"
+        result["llm_scan_brief_skipped"] = "DEEPSEEK_API_KEY 未配置"
 
     if persist and result.get("ok"):
         run_id = save_scan_run(
@@ -256,7 +256,7 @@ def _print_cost_estimates(top_n: int) -> None:
     print(f"- 若 Top{top_n} 每只都出深度研报：约 **¥{full.cny_approx * top_n:.2f}** / 次扫描后全分析")
     print("")
     if not gemini_available():
-        print("当前环境未检测到 GEMINI_API_KEY，以上仅为理论估算。")
+        print("当前环境未检测到 DEEPSEEK_API_KEY，以上仅为理论估算。")
 
 
 def _print_run_detail(run_id: int) -> None:

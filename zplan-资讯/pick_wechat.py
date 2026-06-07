@@ -63,8 +63,15 @@ def try_handle_pick(message: str) -> dict[str, Any] | None:
         }
 
     try:
-        data = json.loads(proc.stdout.strip() or "{}")
+        raw_stdout = proc.stdout.strip() or "{}"
+        data = json.loads(raw_stdout)
     except json.JSONDecodeError:
+        logger.error(
+            "pick subprocess JSON decode failed, stdout len=%d, head=[%s], tail=[%s]",
+            len(proc.stdout or ""),
+            (proc.stdout or "")[:200],
+            (proc.stdout or "")[-200:],
+        )
         return {
             "ok": True,
             "intent": "pick_error",

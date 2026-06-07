@@ -39,9 +39,6 @@ _STOPWORDS = frozenset(
         "查询",
         "搜索",
         "相关",
-        "资讯",
-        "新闻",
-        "消息",
         "最新",
         "最近",
         "最近怎样",
@@ -607,9 +604,9 @@ def _friendly_gemini_error(err: str | None) -> str:
             "等几分钟无效；请打开 https://ai.dev/rate-limit 查看，或换新 API Key / 开通计费"
         )
     if "403" in e or "api key" in e:
-        return "Gemini API Key 无效或无权限（HTTP 403），请检查 .env 中 GEMINI_API_KEY"
+        return "LLM API Key 无效或无权限（HTTP 403），请检查 .env 中 DEEPSEEK_API_KEY"
     if "timeout" in e or "connection" in e:
-        return "无法连接 Gemini（网络超时），请检查 VPN 能否访问 generativelanguage.googleapis.com"
+        return "无法连接 LLM API（网络超时），请检查代理/VPN 设置"
     return _clip(err or "未知错误", 100)
 
 
@@ -619,7 +616,7 @@ def _generation_mode_label(mode: str, gemini_error: str | None = None) -> str:
         "gemini": "【生成方式】Gemini 已对下方检索结果与数据做归纳（见【结论】【观点】）",
         "rule_disabled": "【生成方式】未使用 LLM（本次请求关闭 Gemini，规则模板 + 标题摘录）",
         "rule_llm_off": "【生成方式】未使用 LLM（.env 中 LLM_SUMMARY_ENABLED=false）",
-        "rule_no_key": "【生成方式】未使用 LLM（未配置 GEMINI_API_KEY）",
+        "rule_no_key": "【生成方式】未使用 LLM（未配置 DEEPSEEK_API_KEY）",
         "rule_gemini_failed": f"【生成方式】未使用 LLM（{fail_detail}）",
         "rule_fallback": "【生成方式】未使用 LLM（规则模板 + 标题摘录，未生成【结论】【观点】）",
     }

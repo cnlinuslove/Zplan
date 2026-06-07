@@ -89,6 +89,7 @@ def load_strategy(path: Path | str | None = None) -> PickStrategy:
             "financial": float(w.get("financial", 0.15)),
             "news": float(w.get("news", 0.10)),
             "industry_relative": float(w.get("industry_relative", 0.10)),
+            "cross_market": float(w.get("cross_market", 0)),
         },
         filters=dict(data.get("filters") or {}),
         require_any_signals=list((data.get("signals") or {}).get("require_any") or []),

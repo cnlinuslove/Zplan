@@ -1,17 +1,15 @@
-"""Gemini 2.5 Pro 调用成本估算（美元；价格以 Google AI 开发者 API 为准，可能调整）。"""
+"""DeepSeek API 调用成本估算（美元；价格以 DeepSeek 官方为准，可能调整）。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-# 标准上下文（≤200K tokens）— 见 https://ai.google.dev/gemini-api/docs/pricing
-PRICE_INPUT_PER_M = 1.25
-PRICE_OUTPUT_PER_M = 10.0
-PRICE_INPUT_LONG_PER_M = 2.5
-PRICE_OUTPUT_LONG_PER_M = 15.0
-LONG_CONTEXT_THRESHOLD = 200_000
+# DeepSeek V3 (deepseek-chat) 标准定价 — 见 https://api-docs.deepseek.com/quick_start/pricing
+# 注：价格可能变动，以下为近似值
+PRICE_INPUT_PER_M = 0.27    # $0.27 / 1M input tokens
+PRICE_OUTPUT_PER_M = 1.10   # $1.10 / 1M output tokens
 
-# 经验估算（中文 JSON 研报；实际以 API usageMetadata 为准）
+# 经验估算（中文 JSON 研报；实际以 API usage 为准）
 EST_FULL_REPORT_INPUT = 4_500
 EST_FULL_REPORT_OUTPUT = 2_000
 EST_SCAN_BRIEF_BATCH_INPUT = 2_500
@@ -27,7 +25,7 @@ class CostEstimate:
     output_tokens: int
     usd: float
     cny_approx: float
-    model: str = "gemini-2.5-pro"
+    model: str = "deepseek-chat"
     note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,14 +42,8 @@ class CostEstimate:
 
 
 def _price(input_tokens: int, output_tokens: int) -> float:
-    total_in = input_tokens
-    if total_in > LONG_CONTEXT_THRESHOLD:
-        return (
-            total_in / 1_000_000 * PRICE_INPUT_LONG_PER_M
-            + output_tokens / 1_000_000 * PRICE_OUTPUT_LONG_PER_M
-        )
     return (
-        total_in / 1_000_000 * PRICE_INPUT_PER_M
+        input_tokens / 1_000_000 * PRICE_INPUT_PER_M
         + output_tokens / 1_000_000 * PRICE_OUTPUT_PER_M
     )
 
@@ -68,8 +60,8 @@ def estimate_from_usage(usage: dict[str, Any] | None, *, label: str = "实际调
         output_tokens=out,
         usd=usd,
         cny_approx=usd * 7.2,
-        model=str(usage.get("model") or "gemini-2.5-pro"),
-        note="来自 API usageMetadata",
+        model=str(usage.get("model") or "deepseek-chat"),
+        note="来自 API usage",
     )
 
 
@@ -118,8 +110,8 @@ def format_cost_table(*items: CostEstimate) -> str:
         )
     lines.append("")
     lines.append(
-        f"定价基准：{items[0].model if items else 'gemini-2.5-pro'} "
-        f"≤200K 上下文 ${PRICE_INPUT_PER_M}/M 输入、${PRICE_OUTPUT_PER_M}/M 输出。"
+        f"定价基准：{items[0].model if items else 'deepseek-chat'} "
+        f"${PRICE_INPUT_PER_M}/M 输入、${PRICE_OUTPUT_PER_M}/M 输出。"
     )
-    lines.append("免费档约 **20 次/天**（按 Google AI 配额），超出需计费或换 Key。")
+    lines.append("DeepSeek 无每日免费次数限制，按量计费；详见 https://platform.deepseek.com/usage")
     return "\n".join(lines)

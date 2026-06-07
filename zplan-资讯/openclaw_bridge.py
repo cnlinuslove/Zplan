@@ -14,7 +14,7 @@ from agents.news_agent import (
     send_wechat_test_message,
     unwrap_retry_exception,
 )
-from llm.gemini_client import check_gemini_connectivity, gemini_available
+from llm.gemini_client import check_gemini_connectivity, deepseek_available, gemini_available
 import config as app_config
 from outbound_http import (
     get_x_api_session_mode,
@@ -75,6 +75,7 @@ def build_diag_payload() -> dict:
         "news_fetch_limit_per_topic": app_config.NEWS_FETCH_LIMIT_PER_TOPIC,
         "x_max_pages_per_topic": app_config.X_MAX_PAGES_PER_TOPIC,
         "gemini_configured": gemini_available(),
+        "deepseek_configured": deepseek_available(),
         "llm_summary_enabled": app_config.LLM_SUMMARY_ENABLED,
         "gemini_min_seconds_between_topics": app_config.GEMINI_MIN_SECONDS_BETWEEN_TOPICS,
         "gemini_min_seconds_between_calls": app_config.GEMINI_MIN_SECONDS_BETWEEN_CALLS,
@@ -96,7 +97,7 @@ def build_diag_payload() -> dict:
         "scutil_proxy": scutil_text.strip(),
         "pac_snippet": pac_snippet,
         "hint": (
-            "真实 X 数据：需 can_reach_x_api=true。Gemini 摘要需 GEMINI_API_KEY。"
+            "真实 X 数据：需 can_reach_x_api=true。LLM 摘要需 DEEPSEEK_API_KEY。"
             "微信推送需 WECHAT_PUSH_WEBHOOK（企业微信群机器人地址）。"
             "双向交互：配置企业微信应用回调 `/v1/wework/callback`（推荐），"
             "或编排层 POST `/v1/wechat/reply`、CLI `wechat-reply --text …`。"
@@ -112,12 +113,16 @@ def parse_args() -> argparse.Namespace:
 
     sub.add_parser("diag")
 
-    sub.add_parser("gemini-check", help="探测 Gemini API 是否可达（不写响应中的密钥）")
+    sub.add_parser("gemini-check", help="探测 LLM API 是否可达（已切换 DeepSeek）")
 
     sub.add_parser("wechat-test")
 
     p_wx_reply = sub.add_parser("wechat-reply", help="解析用户微信文本，返回 reply_markdown（供 OpenClaw 回发）")
     p_wx_reply.add_argument("--text", required=True, help="用户发来的纯文本")
+    p_wx_reply.add_argument("--user-id", default=None, help="企微用户 OpenID（可选，用于对话历史）")
+    p_wx_reply.add_argument("--channel", default="cli", help="通道标识（wecom_bot/wework_app/http_bridge/cli）")
+    p_wx_reply.add_argument("--chat-id", default=None, help="群聊 ID（可选）")
+    p_wx_reply.add_argument("--mentioned", action="store_true", help="消息是否显式 @了机器人")
     p_wx_reply.add_argument(
         "--push",
         action="store_true",
@@ -126,7 +131,7 @@ def parse_args() -> argparse.Namespace:
 
     p_ask = sub.add_parser("ask", help="根据问题检索本地多源资讯（东财/Google RSS/NewsAPI 等）")
     p_ask.add_argument("--text", required=True, help="用户问题")
-    p_ask.add_argument("--no-gemini", action="store_true", help="仅用检索列表，不调用 Gemini")
+    p_ask.add_argument("--no-gemini", action="store_true", help="仅用检索列表，不调用 LLM")
     p_ask.add_argument("--no-live", action="store_true", help="仅查本地库，不现场拉取各源")
 
     p_wx_serve = sub.add_parser(
@@ -185,18 +190,27 @@ def handle_topic(args: argparse.Namespace) -> dict:
     return {"ok": True, "action": "delete", **result}
 
 
+def _print_and_flush(payload: dict) -> None:
+    """打印 JSON 并立即刷新，避免管道缓冲导致输出截断。"""
+    import sys
+
+    print(payload_to_json(payload), flush=True)
+    # 双重保险：某些环境下 print 的 flush 可能不够可靠
+    sys.stdout.flush()
+
+
 def main() -> None:
     args = parse_args()
     try:
         if args.cmd == "diag":
-            print(payload_to_json({"ok": True, **build_diag_payload()}))
+            _print_and_flush({"ok": True, **build_diag_payload()})
             return
         if args.cmd == "gemini-check":
             result = check_gemini_connectivity()
-            print(payload_to_json(result))
+            _print_and_flush(result)
             raise SystemExit(0 if result.get("ok") else 1)
         if args.cmd == "wechat-test":
-            print(payload_to_json({"ok": True, **send_wechat_test_message()}))
+            _print_and_flush({"ok": True, **send_wechat_test_message()})
             return
         if args.cmd == "wechat-serve":
             from wechat_http_bridge import run_wechat_http_server
@@ -206,13 +220,19 @@ def main() -> None:
         if args.cmd == "wechat-reply":
             from wechat_push import push_wechat_text
 
-            payload = handle_inbound_text(args.text)
+            payload = handle_inbound_text(
+                args.text,
+                user_id=getattr(args, "user_id", None) or None,
+                channel=getattr(args, "channel", None) or "cli",
+                chat_id=getattr(args, "chat_id", None) or None,
+                mentioned=bool(getattr(args, "mentioned", False)),
+            )
             out: dict = {"ok": True, **payload}
             if getattr(args, "push", False):
                 text = payload.get("reply_text") or payload.get("reply_markdown")
                 if text:
                     out["pushed"] = push_wechat_text(str(text))
-            print(payload_to_json(out))
+            _print_and_flush(out)
             return
         if args.cmd == "ask":
             from agents.info_query import answer_info_question
@@ -222,36 +242,32 @@ def main() -> None:
                 use_gemini=not getattr(args, "no_gemini", False),
                 live=not getattr(args, "no_live", False),
             )
-            print(payload_to_json({"ok": True, **result}))
+            _print_and_flush({"ok": True, **result})
             return
         if args.cmd == "probe":
-            print(
-                payload_to_json(
-                    run_probe(
-                        write_env=getattr(args, "write_env", False),
-                        no_lsof=getattr(args, "no_lsof", False),
-                    )
+            _print_and_flush(
+                run_probe(
+                    write_env=getattr(args, "write_env", False),
+                    no_lsof=getattr(args, "no_lsof", False),
                 )
             )
             return
         if args.cmd == "run-once":
-            print(payload_to_json({"ok": True, "stats": run_news_cycle()}))
+            _print_and_flush({"ok": True, "stats": run_news_cycle()})
             return
         if args.cmd == "history":
-            print(payload_to_json({"ok": True, **get_history_payload(args.mode, args.topic)}))
+            _print_and_flush({"ok": True, **get_history_payload(args.mode, args.topic)})
             return
         if args.cmd == "topic":
-            print(payload_to_json(handle_topic(args)))
+            _print_and_flush(handle_topic(args))
     except Exception as exc:
         root_exc = unwrap_retry_exception(exc)
-        print(
-            payload_to_json(
-                {
-                    "ok": False,
-                    "error": map_exception_to_user_error(exc),
-                    "debug": {"type": root_exc.__class__.__name__, "detail": str(root_exc)},
-                }
-            )
+        _print_and_flush(
+            {
+                "ok": False,
+                "error": map_exception_to_user_error(exc),
+                "debug": {"type": root_exc.__class__.__name__, "detail": str(root_exc)},
+            }
         )
         raise SystemExit(1)
 

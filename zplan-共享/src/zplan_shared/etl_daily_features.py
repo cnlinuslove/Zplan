@@ -18,9 +18,9 @@ _UPSERT_BATCH = 200
 _MIN_BARS = int(__import__("os").getenv("DAILY_FEATURES_MIN_BARS", "60"))
 
 
-def _row_from_series(ts_code: str, trade_date: date, row: pd.Series) -> dict:
+def _row_from_series(ts_code: str, trade_date: date, row: pd.Series, *, market: str = "a") -> dict:
     ingested_at = datetime.utcnow()
-    out: dict = {"ts_code": ts_code, "trade_date": trade_date, "ingested_at": ingested_at}
+    out: dict = {"ts_code": ts_code, "trade_date": trade_date, "market": market, "ingested_at": ingested_at}
     for k in SNAPSHOT_FLOAT_KEYS:
         if k in row.index:
             v = row[k]
@@ -42,7 +42,7 @@ def upsert_daily_features(rows: list[dict]) -> int:
             chunk = rows[i : i + _UPSERT_BATCH]
             stmt = insert(DailyFeature).values(chunk)
             stmt = stmt.on_conflict_do_update(
-                index_elements=["ts_code", "trade_date"],
+                index_elements=["ts_code", "trade_date", "market"],
                 set_={col: getattr(stmt.excluded, col) for col in update_cols}
                 | {"ingested_at": stmt.excluded.ingested_at},
             )
@@ -58,17 +58,18 @@ def run_daily_features_update(
     calendar_days: int = 150,
     min_bars: int | None = None,
     limit: int | None = None,
+    market: str = "a",
 ) -> dict[str, int]:
     """
     由 ``get_history_window`` 批量计算指标，仅 upsert ``as_of`` 当日快照（准确且快）。
     """
     init_db()
     min_bars = min_bars if min_bars is not None else _MIN_BARS
-    trade_date = as_of or latest_trade_date()
+    trade_date = as_of or latest_trade_date(market=market)
     if trade_date is None:
         return {"ok": 0, "rows": 0, "trade_date": None}
 
-    history = get_history_window(end=trade_date, calendar_days=calendar_days)
+    history = get_history_window(end=trade_date, calendar_days=calendar_days, market=market)
     if limit and not history.empty:
         codes = sorted(history["ts_code"].unique())[:limit]
         history = history[history["ts_code"].isin(codes)]
@@ -81,7 +82,7 @@ def run_daily_features_update(
     rows: list[dict] = []
     for _, row in feat_df.iterrows():
         code = str(row["ts_code"])
-        rows.append(_row_from_series(code, trade_date, row))
+        rows.append(_row_from_series(code, trade_date, row, market=market))
 
     n = upsert_daily_features(rows)
     stats = {"ok": len(rows), "rows": n, "trade_date": str(trade_date), "min_bars": min_bars}

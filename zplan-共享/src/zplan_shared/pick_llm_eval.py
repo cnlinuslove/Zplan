@@ -25,11 +25,35 @@ FAIL_TAG_LABELS: dict[str, str] = {
     "score_inflation": "LLM 分显著高于规则分且理由空洞",
     "generic_bullish": "趋势描述为套话，未引用具体信号",
     "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
-    "forward_loss": f"验证期内收盘收益为负",
+    "forward_loss": "验证期内收盘收益为负",
     "forward_flat": "验证期内收益接近 0，推荐未兑现",
     "no_forward_data": "尚无足够后续 K 线",
     "over_recommendation": "推荐档位偏积极（推荐/积极关注）但存在多项风险",
+    # 港股专属标签
+    "penny_stock": "仙股（价格过低，流动性风险）",
+    "low_liquidity": "成交额/换手率过低，流动性不足",
 }
+
+
+# 港股动量阈值（无涨跌停，20日涨幅波动更大）
+_HK_MOMENTUM_RET20_THRESHOLD = 15.0
+_HK_BUY_GAP_FAIL_PCT = 5.0
+_HK_NEAR_HIGH_THRESHOLD = 0.95
+
+
+def _market_thresholds(market: str) -> dict[str, float]:
+    """按市场返回诊断阈值。"""
+    if market == "hk":
+        return {
+            "momentum_ret20_threshold": _HK_MOMENTUM_RET20_THRESHOLD,
+            "buy_gap_fail_pct": _HK_BUY_GAP_FAIL_PCT,
+            "near_high_threshold": _HK_NEAR_HIGH_THRESHOLD,
+        }
+    return {
+        "momentum_ret20_threshold": 8.0,
+        "buy_gap_fail_pct": 3.0,
+        "near_high_threshold": 0.92,
+    }
 
 GENERIC_BULLISH = (
     "均线多头排列",
@@ -78,12 +102,21 @@ def diagnose_entry(
     run: PickRun,
     *,
     horizon_days: int = 5,
-    momentum_ret20_threshold: float = 8.0,
-    buy_gap_fail_pct: float = 3.0,
-    near_high_threshold: float = 0.92,
+    momentum_ret20_threshold: float | None = None,
+    buy_gap_fail_pct: float | None = None,
+    near_high_threshold: float | None = None,
     score_inflation_delta: float = 5.0,
 ) -> dict[str, Any]:
-    """单条 LLM pick 的结构化诊断。"""
+    """单条 LLM pick 的结构化诊断。阈值未指定时按市场自适应。"""
+    market = getattr(entry, "market", None) or getattr(run, "market", None) or "a"
+    mk_thresh = _market_thresholds(market)
+    if momentum_ret20_threshold is None:
+        momentum_ret20_threshold = mk_thresh["momentum_ret20_threshold"]
+    if buy_gap_fail_pct is None:
+        buy_gap_fail_pct = mk_thresh["buy_gap_fail_pct"]
+    if near_high_threshold is None:
+        near_high_threshold = mk_thresh["near_high_threshold"]
+
     proc = _loads(entry.analysis_process_json) or {}
     brief = proc.get("llm_brief") or {}
     ret_20d = proc.get("ret_20d")
@@ -114,7 +147,7 @@ def diagnose_entry(
     buy = entry.predicted_buy_price
     gap = None
     if as_of and entry.ts_code:
-        bars = get_bars(entry.ts_code)
+        bars = get_bars(entry.ts_code, market=market)
         if not bars.empty:
             idx = pd.DatetimeIndex(pd.to_datetime(bars.index)).normalize()
             bars.index = idx
@@ -130,7 +163,7 @@ def diagnose_entry(
 
     fwd_ret, fwd_status = None, "no_as_of"
     if as_of and entry.ts_code:
-        bars = get_bars(entry.ts_code)
+        bars = get_bars(entry.ts_code, market=market)
         if not bars.empty:
             fwd_ret, fwd_status = _forward_return(bars, as_of, horizon_days)
     if fwd_status == "pending":

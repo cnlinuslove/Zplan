@@ -22,16 +22,32 @@ from zplan_shared.models import (
 logger = logging.getLogger(__name__)
 
 # A 股 6 位代码（多种写法）
+_CODE_RE_A1 = re.compile(
+    r"(?<![0-9])([0368]\d{5})(?:\.(?:SH|SZ|BJ))?(?![0-9])",
+    re.IGNORECASE,
+)
+_CODE_RE_A2 = re.compile(
+    r"(?:SH|SZ|BJ)\s*[:：]?\s*([0368]\d{5})(?![0-9])",
+    re.IGNORECASE,
+)
+_CODE_RE_A3 = re.compile(r"[\[【（(]([0368]\d{5})[\]】）)]")
+
+# 港股 5 位代码（通常以 0 开头，如 00700.HK）
+_CODE_RE_HK1 = re.compile(
+    r"(?<![0-9])(\d{5})(?:\.HK)?(?![0-9])",
+    re.IGNORECASE,
+)
+_CODE_RE_HK2 = re.compile(
+    r"HK\s*[:：]?\s*(\d{5})(?![0-9])",
+    re.IGNORECASE,
+)
+
 _CODE_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"(?<![0-9])([0368]\d{5})(?:\.(?:SH|SZ|BJ))?(?![0-9])",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:SH|SZ|BJ)\s*[:：]?\s*([0368]\d{5})(?![0-9])",
-        re.IGNORECASE,
-    ),
-    re.compile(r"[\[【（(]([0368]\d{5})[\]】）)]"),
+    _CODE_RE_A1,
+    _CODE_RE_A2,
+    _CODE_RE_A3,
+    _CODE_RE_HK1,
+    _CODE_RE_HK2,
 )
 
 # 常见非股票 6 位噪声（年份、日期片段等弱过滤）
@@ -89,14 +105,37 @@ class StockMatch:
 
 
 def _normalize_code(raw: str) -> str | None:
-    c = raw.strip().zfill(6)
-    if len(c) != 6 or not c.isdigit():
+    """统一代码格式：A 股 6 位，港股 5 位。"""
+    c = raw.strip().upper()
+    # 去掉后缀
+    if c.endswith(".HK"):
+        c = c[:-3]
+    elif any(c.endswith(f".{s}") for s in ("SH", "SZ", "BJ")):
+        c = c.split(".", 1)[0]
+
+    if not c.isdigit():
         return None
     if c in _CODE_BLOCKLIST:
         return None
-    if c[0] not in "0368":
-        return None
-    return c
+
+    # 5 位 → 港股（补前导零）
+    if len(c) == 5:
+        # 以 0 开头的 5 位代码是典型港股
+        return c.zfill(5)
+    # 4 位 → 可能是港股省略前导零（如 0700 → 00700）
+    if len(c) == 4 and c[0] != "0":
+        return c.zfill(5)
+
+    # A 股：6 位代码需以 0/3/6/8 开头
+    if len(c) == 6 and c[0] in "0368":
+        return c
+    # 5 位以非 0 开头 → 可能是 A 股缺前导零
+    if len(c) == 5 and c[0] in "368":
+        return c.zfill(6)
+    if len(c) == 6 and c.isdigit():
+        return c  # 放宽：接受所有 6 位数字（含港股通可能的新代码）
+
+    return None
 
 
 def _alias_is_source_attribution(text: str, alias: str) -> bool:

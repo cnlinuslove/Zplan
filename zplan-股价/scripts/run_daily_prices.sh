@@ -86,4 +86,14 @@ with SessionLocal() as s:
     echo "[$(date '+%F %T')] 触发选股 pipeline"
     _run "$PY" scripts/run_pick_after_prices.py --notify ${PICK_PIPELINE_ARGS:-}
   fi
+  if [[ "${DAILY_PRICES_REFLECT:-true}" == "true" ]]; then
+    echo "[$(date '+%F %T')] 每日反思报告"
+    REFLECT_PY="${MONO_ROOT}/zplan-回测/scripts/daily_reflect.py"
+    REFLECT_VENV="${MONO_ROOT}/zplan-回测/.venv/bin/python"
+    if [[ -x "$REFLECT_VENV" && -f "$REFLECT_PY" ]]; then
+      _run "$REFLECT_VENV" "$REFLECT_PY" --skip-pick
+    else
+      echo "[$(date '+%F %T')] 跳过反思（缺少 venv 或脚本）"
+    fi
+  fi
 } >>"$LOG" 2>&1

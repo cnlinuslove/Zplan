@@ -1,7 +1,7 @@
 """行情只读查询 API — 各 Agent 统一入口，见 ``docs/DATA_ARCHITECTURE.md``。"""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
 import pandas as pd
@@ -29,11 +29,27 @@ BAR_COLUMNS = (
 
 
 def resolve_ts_code(code: str) -> str:
-    """去掉 ``.SH`` / ``.SZ`` 等后缀，与库内 ``ts_code`` 对齐。"""
+    """去掉 ``.SH`` / ``.SZ`` / ``.HK`` 等后缀，与库内 ``ts_code`` 对齐。"""
     raw = code.strip().upper()
     if "." in raw:
         return raw.split(".", 1)[0]
     return raw
+
+
+def _market_from_code(code: str) -> str:
+    """从带后缀的代码推测市场：``000001.SZ`` → ``'a'``，``00700.HK`` → ``'hk'``。"""
+    raw = code.strip().upper()
+    if raw.endswith(".HK"):
+        return "hk"
+    # .SH / .SZ / .BJ → A 股
+    if any(raw.endswith(f".{s}") for s in ("SH", "SZ", "BJ")):
+        return "a"
+    # 无后缀时按长度推测：5 位 → 港股，6 位 → A 股
+    base = raw.split(".", 1)[0]
+    if base.isdigit():
+        if len(base) == 5:
+            return "hk"
+    return "a"
 
 
 def _parse_date(value: str | date | datetime | None) -> date | None:
@@ -52,14 +68,21 @@ def _parse_date(value: str | date | datetime | None) -> date | None:
 def latest_panel_trade_date(
     *,
     adjust_type: str = DEFAULT_ADJUST_TYPE,
-    min_symbols: int = 1000,
+    min_symbols: int | None = None,
+    market: str = "a",
 ) -> date | None:
-    """最新「截面完整」的交易日（避免仅同步少量自选导致 max(date) 失真）。"""
+    """最新「截面完整」的交易日（避免仅同步少量自选导致 max(date) 失真）。
+
+    ``min_symbols`` 未指定时按市场自适应：A 股 1000，港股 500。
+    """
+    if min_symbols is None:
+        from zplan_shared.config import HK_MIN_PANEL_SYMBOLS
+        min_symbols = 1000 if market == "a" else max(HK_MIN_PANEL_SYMBOLS, 100)
     init_db()
     with SessionLocal() as session:
         row = session.execute(
             select(DailyPrice.trade_date)
-            .where(DailyPrice.adjust_type == adjust_type)
+            .where(DailyPrice.adjust_type == adjust_type, DailyPrice.market == market)
             .group_by(DailyPrice.trade_date)
             .having(func.count(DailyPrice.ts_code) >= min_symbols)
             .order_by(DailyPrice.trade_date.desc())
@@ -71,17 +94,24 @@ def latest_panel_trade_date(
 def latest_trade_date(
     *,
     adjust_type: str = DEFAULT_ADJUST_TYPE,
-    min_panel_symbols: int = 1000,
+    min_panel_symbols: int | None = None,
+    market: str = "a",
 ) -> date | None:
     init_db()
+    if min_panel_symbols is None:
+        from zplan_shared.config import HK_MIN_PANEL_SYMBOLS
+        min_panel_symbols = 1000 if market == "a" else max(HK_MIN_PANEL_SYMBOLS, 100)
     panel_latest = latest_panel_trade_date(
-        adjust_type=adjust_type, min_symbols=min_panel_symbols
+        adjust_type=adjust_type, min_symbols=min_panel_symbols, market=market,
     )
     if panel_latest is not None:
         return panel_latest
     with SessionLocal() as session:
         return session.execute(
-            select(func.max(DailyPrice.trade_date)).where(DailyPrice.adjust_type == adjust_type)
+            select(func.max(DailyPrice.trade_date)).where(
+                DailyPrice.adjust_type == adjust_type,
+                DailyPrice.market == market,
+            )
         ).scalar_one_or_none()
 
 
@@ -91,10 +121,16 @@ def get_bars(
     start: str | date | None = None,
     end: str | date | None = None,
     adjust_type: str = DEFAULT_ADJUST_TYPE,
+    market: str | None = None,
 ) -> pd.DataFrame:
-    """单票日线 → DataFrame，索引为 ``trade_date``。"""
+    """单票日线 → DataFrame，索引为 ``trade_date``。
+
+    ``market`` 为 ``None`` 时不过滤市场（兼容跨市场查询）；默认 ``'a'``。
+    """
     init_db()
     code = resolve_ts_code(ts_code)
+    if market is None:
+        market = _market_from_code(ts_code)
     start_d = _parse_date(start)
     end_d = _parse_date(end)
     stmt = (
@@ -106,6 +142,8 @@ def get_bars(
         stmt = stmt.where(DailyPrice.trade_date >= start_d)
     if end_d:
         stmt = stmt.where(DailyPrice.trade_date <= end_d)
+    if market:
+        stmt = stmt.where(DailyPrice.market == market)
 
     with SessionLocal() as session:
         rows = session.execute(stmt).scalars().all()
@@ -133,10 +171,13 @@ def get_panel(
     *,
     fields: Iterable[str] | None = None,
     adjust_type: str = DEFAULT_ADJUST_TYPE,
+    market: str = "a",
 ) -> pd.DataFrame:
     """指定交易日全市场截面；``as_of`` 默认库内最新交易日。"""
     init_db()
-    as_of_d = _parse_date(as_of) if as_of is not None else latest_trade_date(adjust_type=adjust_type)
+    as_of_d = _parse_date(as_of) if as_of is not None else latest_trade_date(
+        adjust_type=adjust_type, market=market,
+    )
     if as_of_d is None:
         return pd.DataFrame()
 
@@ -147,6 +188,7 @@ def get_panel(
         stmt = select(DailyPrice).where(
             DailyPrice.trade_date == as_of_d,
             DailyPrice.adjust_type == adjust_type,
+            DailyPrice.market == market,
         )
         rows = session.execute(stmt).scalars().all()
 
@@ -159,21 +201,25 @@ def as_of_close(
     as_of: str | date,
     *,
     adjust_type: str = DEFAULT_ADJUST_TYPE,
+    market: str | None = None,
 ) -> float | None:
     """资讯等场景：取某日收盘价（无则 ``None``）。"""
     init_db()
     code = resolve_ts_code(ts_code)
+    if market is None:
+        market = _market_from_code(ts_code)
     as_of_d = _parse_date(as_of)
     if as_of_d is None:
         return None
     with SessionLocal() as session:
-        row = session.execute(
-            select(DailyPrice.close).where(
-                DailyPrice.ts_code == code,
-                DailyPrice.trade_date == as_of_d,
-                DailyPrice.adjust_type == adjust_type,
-            )
-        ).scalar_one_or_none()
+        stmt = select(DailyPrice.close).where(
+            DailyPrice.ts_code == code,
+            DailyPrice.trade_date == as_of_d,
+            DailyPrice.adjust_type == adjust_type,
+        )
+        if market:
+            stmt = stmt.where(DailyPrice.market == market)
+        row = session.execute(stmt).scalar_one_or_none()
     return float(row) if row is not None else None
 
 
@@ -183,10 +229,13 @@ def get_history_window(
     calendar_days: int = 120,
     ts_codes: Iterable[str] | None = None,
     adjust_type: str = DEFAULT_ADJUST_TYPE,
+    market: str = "a",
 ) -> pd.DataFrame:
     """批量日线（长表）：用于全市场预过滤与 ``features.scan_universe``。"""
     init_db()
-    end_d = _parse_date(end) if end is not None else latest_trade_date(adjust_type=adjust_type)
+    end_d = _parse_date(end) if end is not None else latest_trade_date(
+        adjust_type=adjust_type, market=market,
+    )
     if end_d is None:
         return pd.DataFrame()
 
@@ -194,6 +243,7 @@ def get_history_window(
 
     stmt = select(DailyPrice).where(
         DailyPrice.adjust_type == adjust_type,
+        DailyPrice.market == market,
         DailyPrice.trade_date >= start_d,
         DailyPrice.trade_date <= end_d,
     )
@@ -256,6 +306,7 @@ def get_minute_bars(
     *,
     start: str | datetime | None = None,
     end: str | datetime | None = None,
+    market: str = "a",
 ) -> pd.DataFrame:
     """近端分时 K 线（Parquet）；``period`` 为 ``1``/``5``/``15`` 等，与 ETL 写入一致。"""
     code = resolve_ts_code(ts_code)

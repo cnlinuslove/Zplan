@@ -59,7 +59,9 @@ def main() -> None:
                 .order_by(DailyPrice.trade_date)
             )
             if cutoff is not None:
-                stmt = stmt.where(DailyPrice.trade_date >= cutoff.date())
+                # cutoff 可能是 date 或 pd.Timestamp，统一转 date
+                cutoff_date = cutoff.date() if hasattr(cutoff, 'date') else cutoff
+                stmt = stmt.where(DailyPrice.trade_date >= cutoff_date)
             rows = session.execute(stmt).scalars().all()
             if not rows:
                 continue
