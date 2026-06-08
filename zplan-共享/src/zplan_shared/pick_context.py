@@ -195,6 +195,9 @@ def get_pick_context(ts_code: str, *, news_hours: int = 48) -> dict[str, Any]:
         legacy = _news_mentions_legacy_like(code, name, since)
         news_mentions = {**legacy, "via": "title_like_fallback"}
 
+    # 筹码峰数据
+    chip = get_chip_context(code)
+
     return {
         "ts_code": code,
         "name": name,
@@ -204,4 +207,30 @@ def get_pick_context(ts_code: str, *, news_hours: int = 48) -> dict[str, Any]:
         "intraday": intraday,
         "news_mentions": news_mentions,
         "news_linked": news_summary,
+        "chip": chip,
     }
+
+
+def get_chip_context(ts_code: str) -> dict[str, Any]:
+    """单票筹码峰数据快照（成本分布、获利比例、集中度）。"""
+    code = resolve_ts_code(ts_code)
+    try:
+        from zplan_shared.market import get_stock_chip
+        from zplan_shared.market import latest_trade_date as _ltd
+
+        as_of = _ltd()
+        data = get_stock_chip(code, as_of=as_of)
+        if not data:
+            return {"available": False}
+        return {
+            "available": True,
+            "as_of": str(as_of) if as_of else None,
+            "profit_ratio": data.get("profit_ratio"),
+            "avg_cost": data.get("avg_cost"),
+            "concentration_90": data.get("concentration_90"),
+            "concentration_70": data.get("concentration_70"),
+            "cost_90_low": data.get("cost_90_low"),
+            "cost_90_high": data.get("cost_90_high"),
+        }
+    except Exception:
+        return {"available": False}

@@ -123,16 +123,18 @@ def build_rule_scores_universe(
     strategy: PickStrategy | None = None,
     skip_health_check: bool = False,
     use_v2: bool = False,
+    as_of: date | None = None,
 ) -> dict[str, Any]:
     """向量化规则分写入 ``stock_rule_scores``（全预筛池，非仅 Top N）。
 
     Args:
         use_v2: True 时使用 scoring_v2 的 reversal_flow_concept 预设方案。
                 含反转低吸 + 资金流向 + 概念热度因子。
+        as_of: 指定截面日期（默认最新）。A/B 回放用历史日期。
     """
     strat = strategy or load_strategy()
 
-    if not skip_health_check:
+    if not skip_health_check and as_of is None:
         health = check_market_health(
             min_panel_rows=strat.min_panel_rows,
             max_stale_days=strat.max_stale_days,
@@ -140,7 +142,7 @@ def build_rule_scores_universe(
         if not health.ok:
             return {"ok": False, "message": health.message, "health": health.__dict__}
 
-    trade_date = latest_trade_date()
+    trade_date = as_of or latest_trade_date()
     if trade_date is None:
         return {"ok": False, "message": "无日线数据，请先运行 zplan-股价"}
 
@@ -176,12 +178,10 @@ def build_rule_scores_universe(
         feat_df = pd.DataFrame()
 
     if feat_df.empty:
-        logger.info("规则初始化：物化表不足，批量计算指标（预筛 %s 只）…", len(codes))
-        history = get_history_window(end=trade_date, calendar_days=150, ts_codes=codes)
-        feat_df = scan_universe_features(history, min_bars=strat.min_bars)
-        feat_source = "computed"
-    if feat_df.empty:
-        return {"ok": False, "message": "历史 K 线不足，无法计算指标"}
+        return {
+            "ok": False,
+            "message": f"daily_features 不完整，请等待 daily_features 物化完成后再运行 init-rule（预筛 {len(codes)} 只）",
+        }
 
     max_ret = strat.filters.get("max_ret_20d")
     if max_ret is not None and "ret_20d" in feat_df.columns:

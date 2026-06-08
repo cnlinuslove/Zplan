@@ -409,10 +409,17 @@ class StockRuleScore(Base):
 
 
 class PickRun(Base):
-    """选股 Agent 一次运行（扫描 / 单票研报 / 批量）。"""
+    """选股 Agent 一次运行（扫描 / 单票研报 / 批量）。
+
+    A/B 实验：``variant_label`` 区分并行策略变体；
+    ``prompt_hash`` 记录当时 prompt+strategy hash 用于回溯。
+    """
 
     __tablename__ = "pick_runs"
-    __table_args__ = (Index("ix_pick_runs_kind_created", "run_kind", "created_at_utc"),)
+    __table_args__ = (
+        Index("ix_pick_runs_kind_created", "run_kind", "created_at_utc"),
+        Index("ix_pick_runs_variant", "variant_label", "trade_date_as_of"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
@@ -422,6 +429,10 @@ class PickRun(Base):
     llm_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     llm_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     symbol_query: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # ── A/B 实验字段 ──
+    variant_label: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    prompt_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # ── 元数据 ──
     params_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     summary_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at_utc: Mapped[datetime] = mapped_column(
@@ -795,6 +806,8 @@ def init_db() -> None:
     _migrate_ah_cross_ref()
     _migrate_daily_chip()
     _migrate_web_chat()
+    _migrate_concept_product_v2()
+    _migrate_pick_ab_fields()
     _ensure_sqlite_indexes()
     _ensure_news_stock_link_table()
 
@@ -1009,6 +1022,32 @@ def _migrate_pattern_tables() -> None:
                     )"""
                 )
             )
+
+
+def _migrate_concept_product_v2() -> None:
+    """concept_product_cache 补 web search 列（v2 迁移）。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    additions = [
+        ("search_results", "TEXT"),
+        ("search_source", "VARCHAR(32)"),
+        ("search_queried_at", "DATETIME"),
+    ]
+    with engine.begin() as conn:
+        existing = {
+            row[1]
+            for row in conn.execute(
+                text("PRAGMA table_info(concept_product_cache)")
+            ).fetchall()
+        }
+        if not existing:
+            return  # 表不存在，等 _migrate_pattern_tables 创建
+        for col, ddl in additions:
+            if col not in existing:
+                conn.execute(
+                    text(f"ALTER TABLE concept_product_cache ADD COLUMN {col} {ddl}")
+                )
 
 
 def _migrate_chat_history() -> None:
@@ -1298,3 +1337,34 @@ def _migrate_daily_chip() -> None:
             conn.execute(
                 text("CREATE INDEX IF NOT EXISTS ix_daily_chip_trade_date ON daily_chip (trade_date)")
             )
+
+
+def _migrate_pick_ab_fields() -> None:
+    """A/B 实验字段：已有库补 ``variant_label`` 和 ``prompt_hash`` 列 + 索引。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    additions = [
+        ("variant_label", "VARCHAR(64)"),
+        ("prompt_hash", "VARCHAR(64)"),
+    ]
+    with engine.begin() as conn:
+        existing_cols = {
+            row[1]
+            for row in conn.execute(
+                text("PRAGMA table_info(pick_runs)")
+            ).fetchall()
+        }
+        if not existing_cols:
+            return  # 表不存在
+        for col, ddl in additions:
+            if col not in existing_cols:
+                conn.execute(
+                    text(f"ALTER TABLE pick_runs ADD COLUMN {col} {ddl}")
+                )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_pick_runs_variant "
+                "ON pick_runs (variant_label, trade_date_as_of)"
+            )
+        )

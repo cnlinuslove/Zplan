@@ -484,6 +484,25 @@ def format_wechat_pick_text(
     ret20 = snap.get("ret_20d")
     if ret20 is not None:
         lines.append(f"20日涨跌 {ret20:+.2f}%")
+
+    # 筹码峰速览
+    chip_ctx = report.get("modules", {}).get("4_股价分析", {}).get("筹码分布") or {}
+    if chip_ctx.get("available"):
+        pr = chip_ctx.get("profit_ratio")
+        conc = chip_ctx.get("concentration_90")
+        cost = chip_ctx.get("avg_cost")
+        parts = []
+        if pr is not None:
+            label = "获利" if pr >= 50 else "套牢"
+            parts.append(f"获利盘{pr:.0f}%")
+        if conc is not None:
+            conc_label = "集中" if conc < 0.15 else ("较集中" if conc < 0.3 else "分散")
+            parts.append(f"筹码{conc_label}")
+        if cost is not None:
+            parts.append(f"均本¥{cost:.2f}")
+        if parts:
+            lines.append(f"筹码 {' | '.join(parts)}")
+
     concepts = concepts_for_code(code, limit=4)
     if concepts:
         lines.append(f"题材 {'、'.join(concepts[:4])}")

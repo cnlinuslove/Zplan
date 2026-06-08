@@ -129,6 +129,13 @@ GEMINI_MAX_OUTPUT_TOKENS = int(
 )
 X_QUERY_EXCLUDE_SUFFIX = os.getenv("X_QUERY_EXCLUDE_SUFFIX", "").strip()
 
+# ── Web Search（概念产品摘要 grounding）────────────────────────────
+# 默认 DuckDuckGo（免费），设置 TAVILY_API_KEY 后自动升级
+WEB_SEARCH_BACKEND = os.getenv("WEB_SEARCH_BACKEND", "duckduckgo").strip().lower()
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+WEB_SEARCH_TIMEOUT_SECONDS = int(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "15"))
+
 # WeChat
 CHAT_HISTORY_ENABLED = os.getenv("CHAT_HISTORY_ENABLED", "true").lower() == "true"
 # 会话窗口：用户 @ 过 Zplan 后，多少分钟内同群消息无需再次 @（默认 120 分钟）

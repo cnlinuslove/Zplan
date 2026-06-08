@@ -188,7 +188,8 @@ def build_research_report(
                 "关键信号": tech.signals,
                 "指标快照": tech.features,
                 "分时特征": ctx.get("intraday"),
-                "数据来源": "daily_prices + intraday + features",
+                "筹码分布": ctx.get("chip") or {},
+                "数据来源": "daily_prices + intraday + features + daily_chip",
             },
             "5_财务情况": {
                 "近三年记录": fin_rows[:12],
@@ -251,6 +252,20 @@ def format_report_markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "**关键信号**："])
     for sig in report["modules"]["4_股价分析"]["关键信号"] or ["（无显著信号）"]:
         lines.append(f"- {sig}")
+
+    # 筹码峰
+    chip_data = report["modules"]["4_股价分析"].get("筹码分布") or {}
+    if chip_data.get("available"):
+        lines.extend([
+            "",
+            "**筹码分布**：",
+            f"- 获利比例：{chip_data['profit_ratio']:.1f}%",
+            f"- 平均成本：{chip_data['avg_cost']:.2f}",
+            f"- 90%筹码区间：[{chip_data['cost_90_low']:.2f}, {chip_data['cost_90_high']:.2f}]",
+            f"- 90%集中度：{chip_data['concentration_90']:.4f}",
+            f"- 70%集中度：{chip_data['concentration_70']:.4f}",
+            f"- 数据截止：{chip_data.get('as_of', '—')}",
+        ])
 
     snap = report["modules"]["4_股价分析"]["指标快照"]
     if snap:
