@@ -13,6 +13,8 @@ NEWS_ROOT="$MONO_ROOT/zplan-资讯"
 PICK_ROOT="$MONO_ROOT/zplan-选股"
 export ZPLAN_ROOT="${ZPLAN_ROOT:-$NEWS_ROOT}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+# 东财 push2 等子域名直连不通，统一走代理；日线用新浪不受影响
+export AKSHARE_EASTMONEY_DIRECT=false
 
 LOG_DIR="$NEWS_ROOT/logs"; mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/full_pipeline_$(date +%Y%m%d_%H%M).log"
@@ -119,10 +121,9 @@ run_step() {
   fi
 }
 
-# 1. 股价日线（并行补齐当天截面，预计 ~40min）
+# 1. 股价日线（并行补齐当天截面，预计 10-15min）
 TODAY=$(date +%Y-%m-%d)
 run_step "股价日线" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" main.py --catch-up-panel --workers 6 --panel-date "$TODAY"
-run_step "补缺重试" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" scripts/retry_missing_daily.py || true
 
 # 2. 衍生指标
 run_step "衍生-回填" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" scripts/enrich_daily_fields.py

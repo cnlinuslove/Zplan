@@ -81,7 +81,7 @@ def run_trend_agent(
             clear_demo=init,
             realign_source=realign_source,
         )
-    elif not (snapshot or financial or enrich_daily) and not catchup_panel:
+    elif not (snapshot or financial or enrich_daily or chip) and not catchup_panel:
         removed = clear_demo_market_data() if init else 0
         if init and removed:
             logger.info("已清除演示行情 %s 条（source=demo_seed）", removed)
