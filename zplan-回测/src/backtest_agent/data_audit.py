@@ -79,7 +79,7 @@ def score_deviation_report(
         if run_id is None:
             run = session.execute(
                 select(PickRun)
-                .where(PickRun.run_kind == "llm_top300", PickRun.llm_enabled.is_(True))
+                .where(PickRun.run_kind.in_(["llm_top300", "scan"]), PickRun.llm_enabled.is_(True))
                 .order_by(PickRun.id.desc())
                 .limit(1)
             ).scalar_one_or_none()
@@ -88,7 +88,7 @@ def score_deviation_report(
     validation = validate_entries(run_id=run_id, horizons=[horizon_days, 10, 20], limit=top_n * 3)
     llm_eval = evaluate_llm_run(run_id=run_id, top_n=top_n, horizon_days=horizon_days) if run_id else {
         "ok": False,
-        "message": "无 llm_top300 运行",
+        "message": "无 LLM 选股运行（scan/llm_top300）",
     }
 
     rule_vs_llm: list[dict[str, Any]] = []
