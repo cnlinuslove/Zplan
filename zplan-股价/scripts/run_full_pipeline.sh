@@ -107,7 +107,7 @@ run_step() {
 }
 
 # 1. 股价日线
-run_step "股价日线" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" main.py
+run_step "股价日线" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" main.py --catch-up-panel --workers 6
 run_step "补缺重试" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" scripts/retry_missing_daily.py || true
 
 # 2. 衍生指标
