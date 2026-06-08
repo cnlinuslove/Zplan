@@ -1,8 +1,9 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { Card, Descriptions, Tag, Button, Spin, Typography, Space, List } from 'antd'
-import { ArrowLeftOutlined, StarOutlined, StarFilled } from '@ant-design/icons'
-import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Card, Descriptions, Tag, Button, Spin, Typography, Space, List, message, Image } from 'antd'
+import { ArrowLeftOutlined, StarOutlined, StarFilled, FundOutlined } from '@ant-design/icons'
+import { useState, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 import api from '../api/client'
 
 const { Title } = Typography
@@ -10,7 +11,22 @@ const { Title } = Typography
 export default function StockDetailPage() {
   const { tsCode } = useParams()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [watching, setWatching] = useState(false)
+  const [watchLoading, setWatchLoading] = useState(false)
+  const [showChart, setShowChart] = useState(true)
+
+  // 查看是否已在自选
+  const { data: watchlist } = useQuery({
+    queryKey: ['watchlist'],
+    queryFn: () => api.get('/watchlist'),
+  })
+  useEffect(() => {
+    if (watchlist?.data?.items) {
+      const found = watchlist.data.items.some((w: any) => w.ts_code === tsCode)
+      setWatching(found)
+    }
+  }, [watchlist, tsCode])
 
   const { data: detail, isLoading } = useQuery({
     queryKey: ['stock-detail', tsCode],
@@ -30,6 +46,24 @@ export default function StockDetailPage() {
     enabled: !!tsCode,
   })
 
+  // 查找最新选股分析（所有 run 类型）
+  const { data: pickEntry } = useQuery({
+    queryKey: ['stock-pick', tsCode],
+    queryFn: async () => {
+      // 先查 scan runs
+      let runsRes = await api.get('/picks/runs', { params: { limit: 10 } })
+      let runs = runsRes.data?.runs || []
+      for (const run of runs) {
+        const detail = await api.get(`/picks/runs/${run.id}`)
+        const entries = detail.data?.entries || []
+        const found = entries.find((e: any) => e.ts_code === tsCode)
+        if (found) { found._run_kind = run.run_kind; return found }
+      }
+      return null
+    },
+    enabled: !!tsCode,
+  })
+
   if (isLoading) return <Spin style={{ display: 'block', margin: '40vh auto' }} />
   const s = detail?.data?.stock
   if (!s) return <div style={{ padding: 24 }}>未找到 {tsCode}</div>
@@ -37,12 +71,22 @@ export default function StockDetailPage() {
   const latest = s.latest
 
   async function toggleWatchlist() {
-    if (watching) {
-      await api.delete(`/watchlist/${tsCode}`)
-      setWatching(false)
-    } else {
-      await api.post('/watchlist', { ts_code: tsCode })
-      setWatching(true)
+    setWatchLoading(true)
+    try {
+      if (watching) {
+        await api.delete(`/watchlist/${tsCode}`)
+        setWatching(false)
+        message.success('已取消关注')
+      } else {
+        await api.post('/watchlist', { ts_code: tsCode })
+        setWatching(true)
+        message.success(`已添加 ${s?.name || tsCode} 到自选`)
+      }
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] })
+    } catch {
+      message.error('操作失败')
+    } finally {
+      setWatchLoading(false)
     }
   }
 
@@ -51,18 +95,33 @@ export default function StockDetailPage() {
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>返回</Button>
         <Button
-          icon={watching ? <StarFilled /> : <StarOutlined />}
+          icon={watching ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
           onClick={toggleWatchlist}
+          loading={watchLoading}
           type={watching ? 'primary' : 'default'}
         >
           {watching ? '已关注' : '加入自选'}
         </Button>
+        {pickEntry && (
+          <Button
+            type="primary"
+            icon={<FundOutlined />}
+            onClick={() => navigate(`/picks/${pickEntry.id}`)}
+          >
+            查看选股分析
+          </Button>
+        )}
       </Space>
 
       <Card style={{ marginBottom: 16 }}>
         <Title level={3} style={{ margin: 0 }}>
           {s.name} ({s.ts_code})
           <Tag style={{ marginLeft: 8 }}>{s.market === 'a' ? 'A股' : '港股'}</Tag>
+          {pickEntry && (
+            <Tag color="orange" style={{ marginLeft: 4 }}>
+              {pickEntry.recommendation || '-'}
+            </Tag>
+          )}
         </Title>
         <Descriptions bordered size="small" column={4} style={{ marginTop: 12 }}>
           <Descriptions.Item label="行业">{s.industry || '-'}</Descriptions.Item>
@@ -79,8 +138,71 @@ export default function StockDetailPage() {
               <Descriptions.Item label="换手率">{latest.turnover_rate?.toFixed(2)}%</Descriptions.Item>
             </>
           )}
+          {pickEntry && (
+            <>
+              <Descriptions.Item label="选股评分">
+                <strong>{pickEntry.final_composite_score?.toFixed(1)}</strong>
+              </Descriptions.Item>
+              <Descriptions.Item label="建仓价">{pickEntry.predicted_buy_price?.toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="目标价">{pickEntry.predicted_target_price?.toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="止损价">{pickEntry.predicted_stop_loss?.toFixed(2)}</Descriptions.Item>
+            </>
+          )}
         </Descriptions>
       </Card>
+
+      {/* 技术趋势图——默认展示 */}
+      <Card
+        title="📈 技术趋势图 (K线 + MACD + 均线 + 信号)"
+        style={{ marginBottom: 16 }}
+        extra={
+          <Button size="small" onClick={() => setShowChart(!showChart)}>
+            {showChart ? '收起' : '展开'}
+          </Button>
+        }
+      >
+        {showChart && (
+          <Image
+            src={`/api/v1/market/stocks/${tsCode}/chart?lookback=120`}
+            alt="K线图"
+            style={{ width: '100%', maxHeight: 700, objectFit: 'contain', background: '#0d0d0d', minHeight: 200 }}
+            preview={{ mask: '点击放大' }}
+            placeholder={
+              <div style={{ padding: 60, textAlign: 'center', color: '#888', background: '#0d0d0d', minHeight: 200 }}>
+                <Spin /> <span style={{ marginLeft: 12 }}>趋势图生成中...</span>
+              </div>
+            }
+          />
+        )}
+      </Card>
+
+      {/* 选股分析简版 + 链接 */}
+      {pickEntry ? (
+        <Card
+          title="📝 选股分析"
+          extra={<Button size="small" onClick={() => navigate(`/picks/${pickEntry.id}`)}>查看完整报告 →</Button>}
+          style={{ marginBottom: 16 }}
+        >
+          <Descriptions size="small" column={3}>
+            <Descriptions.Item label="规则分">{pickEntry.rule_composite_score?.toFixed(1)}</Descriptions.Item>
+            <Descriptions.Item label="LLM分">{pickEntry.llm_composite_score?.toFixed(1) || '-'}</Descriptions.Item>
+            <Descriptions.Item label="最终分"><strong>{pickEntry.final_composite_score?.toFixed(1)}</strong></Descriptions.Item>
+            <Descriptions.Item label="建议">{pickEntry.recommendation}</Descriptions.Item>
+            <Descriptions.Item label="判定">{pickEntry.verdict}</Descriptions.Item>
+            <Descriptions.Item label="排名">#{pickEntry.rank}</Descriptions.Item>
+          </Descriptions>
+          {pickEntry.markdown_report && (
+            <div style={{ lineHeight: 1.8, maxHeight: 400, overflow: 'auto', marginTop: 12 }}>
+              <ReactMarkdown>{pickEntry.markdown_report}</ReactMarkdown>
+            </div>
+          )}
+        </Card>
+      ) : (
+        <Card title="📝 选股分析" style={{ marginBottom: 16 }}>
+          <p>该股票暂未出现在最新选股榜单中。</p>
+          <p>可在对话中发送「分析 {s.name}」触发 LLM 深度分析。</p>
+        </Card>
+      )}
 
       {/* 概念标签 */}
       {s.concepts && s.concepts.length > 0 && (
@@ -93,14 +215,14 @@ export default function StockDetailPage() {
         </Card>
       )}
 
-      {/* K 线简表 */}
+      {/* K 线数据表 */}
       {bars?.data?.bars && bars.data.bars.length > 0 && (
-        <Card title="📊 近期行情" style={{ marginBottom: 16 }}>
+        <Card title="📊 近期行情数据" style={{ marginBottom: 16 }}>
           <div style={{ overflow: 'auto', maxHeight: 300 }}>
             <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #303030' }}>
-                  <th>日期</th><th>开</th><th>高</th><th>低</th><th>收</th><th>量</th><th>涨跌</th>
+                  <th>日期</th><th>开</th><th>高</th><th>低</th><th>收</th><th>量(万)</th><th>涨跌</th>
                 </tr>
               </thead>
               <tbody>
@@ -131,7 +253,7 @@ export default function StockDetailPage() {
             renderItem={(n: any) => (
               <List.Item>
                 <List.Item.Meta
-                  title={<a href={n.url} target="_blank">{n.title}</a>}
+                  title={<a href={n.url} target="_blank" rel="noopener noreferrer">{n.title}</a>}
                   description={`${n.source} · ${n.published_at} · 置信度 ${n.confidence?.toFixed(2)}`}
                 />
               </List.Item>

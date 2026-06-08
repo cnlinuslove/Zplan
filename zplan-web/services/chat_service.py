@@ -98,6 +98,7 @@ async def stream_llm_response(
     user_text: str,
     system_prompt: str = "",
     model: str | None = None,
+    history: list[dict] | None = None,
 ) -> AsyncIterator[dict]:
     """
     流式调用 DeepSeek chat/completions，逐 token yield。
@@ -120,10 +121,15 @@ async def stream_llm_response(
         yield {"type": "done", "intent": cached.get("intent", ""), "full_text": full_text, "cached": True}
         return
 
-    # 构建消息
+    # 构建消息——包含历史对话
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
+    # 多轮对话历史
+    if history:
+        for h in history[-20:]:  # 最近 20 条
+            if h.get("content"):
+                messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": user_text})
 
     client = AsyncOpenAI(

@@ -114,7 +114,14 @@ function runZplanReply(userText, childEnv, { userId, chatId, mentioned } = {}) {
           return;
         }
         finish(resolve, {
-          text: String(data.reply_text || data.reply_markdown || "（无回复内容）").slice(0, 1800),
+          // 优先使用更长的 reply（markdown 支持 4096 字节，可嵌入可点击链接）
+          text: (() => {
+            const rt = String(data.reply_text || "");
+            const rm = String(data.reply_markdown || "");
+            const preferred = rm.length > rt.length ? rm : rt;
+            const maxLen = rm.length > rt.length ? 3600 : 1800;
+            return (preferred || "（无回复内容）").slice(0, maxLen);
+          })(),
           templateCard: data.reply_template_card || null,
           pdfPath: data.pdf_path || null,
         });
@@ -260,6 +267,11 @@ async function main() {
   const ws = new WSClient({ botId, secret });
   const inFlight = new Set();
   const childEnv = buildChildEnv();
+  // WebSocket 僵死连接看门狗：超过 2 小时无消息则强制重连
+  let lastActivityTs = Date.now();
+  const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 每 5 分钟检查一次
+  const WATCHDOG_IDLE_MAX_MS = 2 * 60 * 60 * 1000; // 超过 2 小时无消息视为僵死
+  function bumpActivity() { lastActivityTs = Date.now(); }
 
   const proxy = await resolveOutboundProxy();
   if (proxy) {
@@ -272,11 +284,13 @@ async function main() {
   }
 
   ws.on("authenticated", () => {
+    bumpActivity();
     console.log("[wecom-zplan] 已连接企微，等待消息…（@机器人 发「帮助」测试）");
   });
 
   // ── 文本消息 ──
   ws.on("message.text", (frame) => {
+    bumpActivity();
     const raw = frame?.body?.text?.content || "";
     const query = stripMention(raw);
     if (!query) return;
@@ -323,6 +337,9 @@ async function main() {
 
   // ── 模板卡片按钮点击 ──
   ws.on("template_card_event", (frame) => {
+    bumpActivity();
+
+
     const eventKey = frame?.body?.event?.template_card_event?.event_key;
     if (!eventKey) return;
 
@@ -333,7 +350,24 @@ async function main() {
   });
 
   ws.connect();
+
+  // ── WebSocket 僵死看门狗：定期检查连接活性 ──
+  const watchdog = setInterval(() => {
+    const idle = Date.now() - lastActivityTs;
+    if (idle > WATCHDOG_IDLE_MAX_MS) {
+      const idleH = (idle / 3600000).toFixed(1);
+      console.warn(`[wecom-zplan] ⚠️ ${idleH}h 无消息，可能僵死连接，强制重连…`);
+      lastActivityTs = Date.now(); // 防重入
+      try { ws.disconnect(); } catch { /* ignore */ }
+      setTimeout(() => {
+        try { ws.connect(); } catch { /* ignore */ }
+      }, 2000);
+    }
+  }, WATCHDOG_INTERVAL_MS);
+  watchdog.unref(); // 不阻止进程退出
+
   process.on("SIGINT", () => {
+    clearInterval(watchdog);
     ws.disconnect();
     process.exit(0);
   });

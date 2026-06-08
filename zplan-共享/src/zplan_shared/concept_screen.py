@@ -16,6 +16,32 @@ from zplan_shared.models import SessionLocal, StockConceptMember, StockList, ini
 
 logger = logging.getLogger(__name__)
 
+# ── 概念别名：用户俗称 → 东财实际板块名 ──────────────────────────
+# 东财概念板块命名与市场俗称不完全一致（如市场说"脑机接口"，东财叫"人脑工程"）。
+# 增加此映射后，用户输入俗称即可自动路由到正确板块，无需手动重输。
+# 添加方法：将俗称作为 key，东财板块名作为 value。key 会做精确匹配（不区分大小写/全角半角）。
+_CONCEPT_ALIASES: dict[str, str] = {
+    "脑机接口": "人脑工程",
+    "脑机": "人脑工程",
+    "BCI": "人脑工程",
+}
+
+
+def resolve_alias(query: str) -> str | None:
+    """检查 query 是否为已知别名，若是则返回映射后的东财概念板名称。"""
+    key = query.strip()
+    if not key:
+        return None
+    # 精确匹配
+    if key in _CONCEPT_ALIASES:
+        return _CONCEPT_ALIASES[key]
+    # 大小写不敏感
+    key_lower = key.lower()
+    for k, v in _CONCEPT_ALIASES.items():
+        if k.lower() == key_lower:
+            return v
+    return None
+
 
 def _normalize_ts(code: str) -> str:
     raw = str(code).strip().split(".")[0]
@@ -53,15 +79,26 @@ def fetch_concept_board_names(*, keyword: str | None = None) -> list[str]:
 def resolve_concept_names(query: str, *, from_cache_only: bool = False) -> list[str]:
     """
     解析用户输入的题材关键词 → 匹配的概念板名称列表。
-    优先精确/包含匹配；多个命中时全部返回。
+    优先别名映射 → 精确/包含匹配；多个命中时全部返回。
     """
     key = query.strip()
+
+    # 1) 别名优先：用户俗称 → 东财实际板块名
+    aliased = resolve_alias(key)
+    if aliased:
+        # 校验别名目标是否已缓存/可获取
+        target = list_cached_concepts(keyword=aliased, limit=5)
+        if target:
+            return target
+
+    # 2) 本地缓存包含匹配
     cached = list_cached_concepts(keyword=key, limit=200)
     if cached:
         return cached
     if from_cache_only:
         return []
 
+    # 3) 在线拉取
     try:
         online = fetch_concept_board_names(keyword=key)
     except Exception as exc:
@@ -70,7 +107,6 @@ def resolve_concept_names(query: str, *, from_cache_only: bool = False) -> list[
 
     if not online:
         return []
-    # 模糊：用户输入「脑机接口」可命中「脑机接口」「脑机概念」等
     return [n for n in online if key in n or n in key]
 
 

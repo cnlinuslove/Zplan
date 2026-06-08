@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
-import { Input, Button, Space, Card, Tag } from 'antd'
+import { Input, Button, Space, Card, Tag, Image } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import { SendOutlined, PlusOutlined } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '../stores/chatStore'
 import { sseStream } from '../api/client'
 
 export default function ChatPage() {
+  const navigate = useNavigate()
   const { sessionId, messages, loading, setSessionId, addMessage, appendToken, setLoading, clearMessages } =
     useChatStore()
   const [input, setInput] = useState('')
@@ -52,6 +54,7 @@ export default function ChatPage() {
                 ...last,
                 streaming: false,
                 intent: event.intent as string,
+                chart: event.chart as any,
               }
             }
             return { messages: msgs }
@@ -142,6 +145,24 @@ export default function ChatPage() {
               {msg.role === 'assistant' ? (
                 <div style={{ lineHeight: 1.8 }}>
                   <ReactMarkdown>{msg.content || (msg.streaming ? '▊' : '')}</ReactMarkdown>
+                  {msg.chart && (
+                    <div style={{ marginTop: 12, borderTop: '1px solid #303030', paddingTop: 12 }}>
+                      <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>
+                        📈 技术趋势图
+                      </div>
+                      <Image
+                        src={msg.chart.chart_url}
+                        alt="K线图"
+                        style={{ maxWidth: '100%', maxHeight: 400, objectFit: 'contain', background: '#0d0d0d', borderRadius: 4 }}
+                        preview={{ mask: '点击放大' }}
+                      />
+                      <div style={{ marginTop: 8 }}>
+                        <Button size="small" onClick={() => navigate(msg.chart!.detail_url)}>
+                          查看个股详情 →
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ color: '#fff' }}>{msg.content}</div>

@@ -5,6 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from sqlalchemy import desc, select, func
 
+import logging
+from datetime import date
+from pathlib import Path
+
+from fastapi.responses import StreamingResponse
+
 from zplan_shared.models import (
     DailyPrice,
     SessionLocal,
@@ -13,6 +19,7 @@ from zplan_shared.models import (
 )
 from zplan_shared.market import get_bars, resolve_ts_code
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["market"])
 
 
@@ -40,7 +47,7 @@ async def search_stocks(
                     "name": r.name,
                     "industry": r.industry,
                     "market": r.market,
-                    "list_date": r.list_date.isoformat() if r.list_date else None,
+                    "list_date": r.listing_date.isoformat() if r.listing_date else None,
                 }
                 for r in rows
             ],
@@ -57,7 +64,7 @@ async def get_stock_bars(
 ):
     """获取个股 K 线数据。"""
     try:
-        code = resolve_ts_code(ts_code, market=market) or ts_code
+        code = resolve_ts_code(ts_code) or ts_code
         df = get_bars(code, lookback=days, market=market)
     except Exception as exc:
         return {"ok": False, "error": str(exc), "ts_code": ts_code}
@@ -96,11 +103,11 @@ async def get_stock_news(
         rows = db.execute(
             text(
                 """SELECT gn.title, gn.description, gn.source_name, gn.article_url,
-                          gn.published_at, nsl.confidence, nsl.event_type
+                          gn.published_at_utc, nsl.confidence, nsl.event_type
                    FROM news_stock_link nsl
                    JOIN global_news gn ON nsl.news_id = gn.id AND nsl.news_source = 'global_news'
                    WHERE nsl.ts_code = :code AND nsl.market = :market
-                   ORDER BY gn.published_at DESC
+                   ORDER BY gn.published_at_utc DESC
                    LIMIT :limit"""
             ),
             {"code": ts_code, "market": market, "limit": limit},
@@ -162,13 +169,13 @@ async def get_stock_detail(ts_code: str, market: str = Query(default="a")):
                 "name": stock.name,
                 "industry": stock.industry,
                 "market": stock.market,
-                "list_date": stock.list_date.isoformat() if stock.list_date else None,
+                "list_date": stock.listing_date.isoformat() if stock.listing_date else None,
                 "concepts": list(concepts) if concepts else [],
                 "latest": {
                     "trade_date": str(latest_bar.trade_date) if latest_bar else None,
                     "close": latest_bar.close if latest_bar else None,
                     "pct_chg": latest_bar.pct_chg if latest_bar else None,
-                    "volume": latest_bar.vol if latest_bar else None,
+                    "volume": latest_bar.volume if latest_bar else None,
                     "turnover_rate": latest_bar.turnover_rate if latest_bar else None,
                 }
                 if latest_bar
@@ -179,18 +186,67 @@ async def get_stock_detail(ts_code: str, market: str = Query(default="a")):
         db.close()
 
 
+@router.get("/market/stocks/{ts_code}/chart")
+async def get_stock_chart(
+    ts_code: str,
+    lookback: int = 120,
+    market: str = "a",
+):
+    """生成个股 K 线 + MACD 趋势图（PNG，生成后缓存复用）。"""
+    try:
+        from zplan_shared.chart_viz import plot_stock_chart
+        import time as _time
+
+        code = resolve_ts_code(ts_code) or ts_code
+        output_dir = Path("/tmp/zplan-charts")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 缓存：当天已生成过就直接返回（文件名格式匹配 chart_viz.py）
+        today = date.today().strftime("%Y%m%d")
+        cache_path = output_dir / f"{code}_{today}_kline.png"
+        if cache_path.exists():
+            return StreamingResponse(open(cache_path, "rb"), media_type="image/png")
+
+        _t0 = _time.monotonic()
+        path = plot_stock_chart(code, lookback=lookback, output_dir=str(output_dir))
+        logger.info("Chart generated for %s in %.1fs", code, _time.monotonic() - _t0)
+        return StreamingResponse(open(path, "rb"), media_type="image/png")
+    except Exception as exc:
+        logger.exception("Chart generation failed for %s", ts_code)
+        return {"ok": False, "error": str(exc)}
+
+
 @router.get("/market/concepts")
 async def list_concepts(
     q: str = Query(default="", description="概念名称关键词"),
-    limit: int = Query(default=30, le=100),
+    limit: int = Query(default=50, le=200),
 ):
-    """搜索/列出概念板块。"""
+    """搜索/列出概念板块（q 为空时返回热门概念，按成份股数量排序）。"""
     db = SessionLocal()
     try:
-        stmt = select(func.distinct(StockConceptMember.concept_name))
         if q:
-            stmt = stmt.where(StockConceptMember.concept_name.contains(q))
-        stmt = stmt.limit(limit)
+            stmt = (
+                select(func.distinct(StockConceptMember.concept_name))
+                .where(StockConceptMember.concept_name.contains(q))
+                .limit(limit)
+            )
+        else:
+            # 无搜索词时返回热门概念（成份股最多的前 N 个）
+            stmt = (
+                select(
+                    StockConceptMember.concept_name,
+                    func.count(StockConceptMember.ts_code).label("cnt"),
+                )
+                .group_by(StockConceptMember.concept_name)
+                .order_by(func.count(StockConceptMember.ts_code).desc())
+                .limit(limit)
+            )
+            rows = db.execute(stmt).all()
+            return {
+                "ok": True,
+                "concepts": [{"name": r[0], "stock_count": r[1]} for r in rows if r[0]],
+            }
+
         names = db.scalars(stmt).all()
         return {"ok": True, "concepts": [{"name": n} for n in names if n]}
     finally:
@@ -212,7 +268,7 @@ async def get_concept_stocks(concept_name: str, market: str = Query(default="a")
             "ok": True,
             "concept": concept_name,
             "stocks": [
-                {"ts_code": r.ts_code, "name": r.stock_name} for r in rows
+                {"ts_code": r.ts_code, "name": r.name} for r in rows
             ],
         }
     finally:

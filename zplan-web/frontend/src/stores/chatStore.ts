@@ -7,6 +7,7 @@ export interface ChatMessage {
   intent?: string
   cost_usd?: number
   streaming?: boolean
+  chart?: { ts_code: string; chart_url: string; detail_url: string } | null
 }
 
 interface ChatState {

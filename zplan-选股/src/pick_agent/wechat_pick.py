@@ -308,6 +308,81 @@ def _synthesize_verdict(
         return "观望", "📊"
 
 
+def _format_company_section(report: dict[str, Any]) -> list[str]:
+    """从 report 中提取公司简介行（≤4 行，企微消息尺寸适配）。
+
+    优先级：LLM 公司摘要 > company_products LLM调研 > 公司档案定位 > 核心产品
+    """
+    modules = report.get("modules") or {}
+    m1 = modules.get("1_基本信息") or {}
+    m2 = modules.get("2_核心产品") or {}
+    m8 = modules.get("8_核心竞争力") or {}
+    meta = report.get("meta") or {}
+
+    positioning = m1.get("公司定位", "")
+    if positioning and (positioning.startswith("待") or positioning == ""):
+        positioning = ""
+
+    # LLM 深度模式下的公司摘要
+    llm_summary = m8.get("公司摘要") or ""
+
+    # rule 模式下的核心产品
+    core_products_raw = m2.get("核心产品") or ""
+    if isinstance(core_products_raw, str) and core_products_raw.startswith("{"):
+        try:
+            import json as _json
+            products = _json.loads(core_products_raw)
+            biz = products.get("主营业务", "")
+            scope = products.get("经营范围", "")
+            core_products_raw = biz if biz else (scope[:80] + "..." if len(scope) > 80 else scope)
+        except Exception:
+            pass
+    if core_products_raw and core_products_raw.startswith("待"):
+        core_products_raw = ""
+
+    result = []
+
+    # 优先展示 LLM 公司摘要
+    if llm_summary and str(llm_summary).strip():
+        result.append(f"🏢 {str(llm_summary)[:150]}")
+    elif positioning:
+        result.append(f"🏢 {str(positioning)[:150]}")
+    elif core_products_raw:
+        result.append(f"🏢 {str(core_products_raw)[:150]}")
+
+    # 尝试从 company_products 加载产品信息
+    ts_code = meta.get("ts_code", "")
+    if ts_code:
+        try:
+            from zplan_shared.enrich_company import _load_company_products, _get_db
+            db = _get_db()
+            try:
+                cp = _load_company_products(db, ts_code)
+                if cp:
+                    # LLM 调研的竞争定位（简版）
+                    llm_pos = cp.get("competitive_positioning")
+                    if isinstance(llm_pos, str) and llm_pos.strip():
+                        result.append(f"🎯 {llm_pos.strip()[:120]}")
+                    # 产品名列表（截取前 5 个）
+                    product_names = cp.get("product_names")
+                    if isinstance(product_names, str) and product_names.strip():
+                        names = [n.strip() for n in product_names.replace("、", "，").split("，") if n.strip()]
+                        top5 = names[:5]
+                        if top5:
+                            result.append(f"📦 核心产品：{' · '.join(top5)}")
+            finally:
+                db.close()
+        except Exception:
+            pass
+
+    # 官网
+    website = m1.get("官网")
+    if website and str(website).strip():
+        result.append(f"🔗 {str(website).strip()[:100]}")
+
+    return result[:5]
+
+
 def format_wechat_pick_text(
     report: dict[str, Any],
     *,
@@ -350,6 +425,11 @@ def format_wechat_pick_text(
     if llm_score is not None:
         lines.append(f"LLM综合分 {llm_score} | LLM建议 {llm_rec_text}")
 
+    # ── 公司简介（关键：主营业务 + 核心产品）──
+    company_lines = _format_company_section(report)
+    if company_lines:
+        lines.extend(company_lines)
+
     # ── LLM 分析详情 ──
     if llm_brief:
         brief = llm_brief.get("llm_brief") or {}
@@ -359,6 +439,8 @@ def format_wechat_pick_text(
             lines.append(f"📊 {trend}")
         if vs_rule:
             lines.append(f"💡 {vs_rule}")
+        # 简评模式也附加链接资讯
+        lines.extend(_format_linked_news_lines(report))
     elif report.get("llm"):
         llm = report["llm"]
         price_analysis = advice.get("LLM股价分析") or llm.get("price_trend_analysis", "")
@@ -370,9 +452,17 @@ def format_wechat_pick_text(
         fin_analysis = advice.get("LLM财务分析") or llm.get("financial_analysis", "")
         if fin_analysis:
             lines.append(f"💰 财务 {fin_analysis[:100]}")
+        # 链接资讯（含可点击 URL）紧接舆情区，避免被尾部截断
+        linked_news_lines = _format_linked_news_lines(report)
+        has_linked_urls = any("http" in ln for ln in linked_news_lines)
         news_analysis = llm.get("news_analysis", "")
-        if news_analysis:
-            lines.append(f"📰 舆情 {news_analysis[:100]}")
+        # 有可点击链接 → 优先展示链接；仅有 LLM 摘要 → 展示摘要 + 兜底行
+        if has_linked_urls:
+            lines.extend(linked_news_lines)
+        else:
+            if news_analysis and "空" not in str(news_analysis) and "缺失" not in str(news_analysis):
+                lines.append(f"📰 舆情 {news_analysis[:100]}")
+            lines.extend(linked_news_lines)
         summary = advice.get("总结") or advice.get("investment_summary")
         if not price_analysis and summary:
             lines.append(f"📋 {summary[:150]}")
@@ -387,6 +477,8 @@ def format_wechat_pick_text(
         summary = advice.get("总结")
         if summary:
             lines.append(f"📊 {summary[:120]}")
+        # 非 LLM 路径：链接资讯紧跟核心结论
+        lines.extend(_format_linked_news_lines(report))
 
     # ── 基本面速览 ──
     ret20 = snap.get("ret_20d")
@@ -463,7 +555,6 @@ def format_wechat_pick_text(
         for s in scenarios[:3]:
             lines.append(f"  {str(s)[:100]}")
 
-    lines.extend(_format_linked_news_lines(report))
 
     if run_id is not None:
         lines.append(f"（已入库 run_id={run_id}）")
@@ -651,10 +742,12 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
     sd = latest_score_date(rule_version=strat.rule_version)
     score_date = str(sd) if sd else "最新"
 
-    # 批量获取 ret_20d + 信号（Top 20 只）
+    # 批量获取 ret_20d + 信号 + PE/市值（Top 20 只）
     top_codes = tuple(show["ts_code"].values)
     ret_map: dict[str, float | None] = {}
     sig_map: dict[str, list[str]] = {}
+    pe_map: dict[str, float | None] = {}
+    mv_map: dict[str, float | None] = {}
     import json as _json
 
     try:
@@ -685,10 +778,40 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
                     ret20 = feats.get("ret_20d")
                     if ret20 is not None:
                         ret_map[code] = float(ret20)
-                except (json.JSONDecodeError, TypeError):
+                except Exception:
                     pass
+
+        # 批量获取 PE + 市值
+        sd_str = str(sd)
+        with SessionLocal() as s:
+            rows2 = s.execute(
+                text(
+                    f"SELECT ts_code, pe_ttm, total_mv FROM daily_snapshot "
+                    f"WHERE ts_code IN ({placeholders}) AND trade_date = :d"
+                ),
+                {**{f"c{i}": c for i, c in enumerate(top_codes)}, "d": sd_str},
+            ).fetchall()
+        for r in rows2:
+            code = r[0]
+            if r[1] is not None:
+                pe_map[code] = float(r[1])
+            if r[2] is not None:
+                mv_map[code] = float(r[2])
     except Exception:
-        logger.warning("获取 ret_20d/信号失败", exc_info=True)
+        logger.warning("获取扩展数据失败", exc_info=True)
+
+    # ── 产品摘要（LLM 批量 + 缓存）──
+    product_map: dict[str, str] = {}
+    try:
+        from zplan_shared.concept_product import generate_product_summaries
+        name_map = {}
+        for _, row in show.iterrows():
+            name_map[str(row["ts_code"])] = str(row.get("name", ""))
+        product_map = generate_product_summaries(
+            list(top_codes), concept_query, names=name_map
+        )
+    except Exception:
+        logger.warning("产品摘要获取失败", exc_info=True)
 
     lines = [
         f"【题材筛选 · {concept_query}】",
@@ -705,16 +828,28 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
         verdict = row.get("verdict", "")
         verdict_str = str(verdict) if verdict and str(verdict) != "nan" else ""
 
-        # 价格
+        # 价格 + 建议买入（收盘价 × 0.98 估算）
         price_str = f"¥{float(close):.2f}" if close is not None and str(close) != "nan" else ""
+        buy_price = round(float(close) * 0.98, 2) if close is not None and str(close) != "nan" and float(close) > 0 else None
         # 20日涨跌
         ret20 = ret_map.get(code)
         ret20_str = f"20日{ret20:+.1f}%" if ret20 is not None else ""
+        # PE + 市值
+        pe = pe_map.get(code)
+        pe_str = f"PE {pe:.1f}" if pe is not None and pe > 0 else ""
+        mv = mv_map.get(code)
+        if mv is not None and mv > 0:
+            if mv >= 1e8:
+                mv_str = f"市值{mv/1e8:.0f}亿"
+            else:
+                mv_str = f"市值{mv/1e4:.0f}万"
+        else:
+            mv_str = ""
         # 信号
         sigs = sig_map.get(code, [])
         sig_str = " · ".join(str(s) for s in sigs[:2]) if sigs else ""
 
-        # 第一行：排名. 名(码) ¥价 · 规则分+结论
+        # 第一行：排名. 名(码) ¥价 · 建议买入 · 规则分+结论
         meta = []
         if score_val is not None:
             meta.append(f"规则{score_val}分")
@@ -722,19 +857,34 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
             meta.append(verdict_str)
         if price_str:
             meta.append(price_str)
+        if buy_price:
+            meta.append(f"建议买入 ¥{buy_price}")
         line1 = f"{i+1:2d}. {name}({code})  {' · '.join(meta)}"
 
-        # 第二行：20日涨跌 + 信号
+        # 第二行：PE / 市值 / 20日走势
         detail = []
+        if pe_str:
+            detail.append(pe_str)
+        if mv_str:
+            detail.append(mv_str)
         if ret20_str:
             detail.append(ret20_str)
-        if sig_str:
-            detail.append(f"信号: {sig_str}")
         line2 = f"    { '  |  '.join(detail) }" if detail else ""
+
+        # 第三行：信号
+        line3 = f"    {sig_str}" if sig_str else ""
+
+        # 第四行：产品摘要
+        product = product_map.get(code, "")
+        line4 = f"    🏷 {product}" if product else ""
 
         lines.append(line1)
         if line2:
             lines.append(line2)
+        if line3:
+            lines.append(line3)
+        if line4:
+            lines.append(line4)
 
     if total > limit:
         lines.append(f"    ... 另有 {total - limit} 只")

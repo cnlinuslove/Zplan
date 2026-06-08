@@ -11,6 +11,8 @@ from fastapi import APIRouter, BackgroundTasks, Query
 from pydantic import BaseModel
 from sqlalchemy import desc, select, func
 
+import math
+
 from zplan_shared.models import (
     PickEntry,
     PickRun,
@@ -18,6 +20,37 @@ from zplan_shared.models import (
     SessionLocal,
     StockList,
 )
+
+
+def _safe_float(v: float | None) -> float | None:
+    """将 NaN/Inf 转换为 None，避免 JSON 序列化报错。"""
+    if v is None:
+        return None
+    if math.isnan(v) or math.isinf(v):
+        return None
+    return v
+
+
+def _safe_entry(e: PickEntry) -> dict:
+    """将 PickEntry 转为安全 dict（NaN → None）。"""
+    return {
+        "id": e.id,
+        "ts_code": e.ts_code,
+        "name": e.name,
+        "rank": e.rank_in_run,
+        "close_price": _safe_float(e.close_price),
+        "rule_composite_score": _safe_float(e.rule_composite_score),
+        "llm_composite_score": _safe_float(e.llm_composite_score),
+        "final_composite_score": _safe_float(e.final_composite_score),
+        "recommendation": e.recommendation,
+        "verdict": e.verdict,
+        "predicted_buy_price": _safe_float(e.predicted_buy_price),
+        "predicted_target_price": _safe_float(e.predicted_target_price),
+        "predicted_stop_loss": _safe_float(e.predicted_stop_loss),
+        "report_json": json.loads(e.report_json) if e.report_json else None,
+        "markdown_report": e.markdown,
+        "analysis_json": json.loads(e.analysis_process_json) if e.analysis_process_json else None,
+    }
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["picks"])
@@ -105,30 +138,7 @@ async def get_pick_run(run_id: int):
                 "entry_count": entry_count,
                 "created_at": run.created_at_utc.isoformat() if run.created_at_utc else None,
             },
-            "entries": [
-                {
-                    "id": e.id,
-                    "ts_code": e.ts_code,
-                    "name": e.name,
-                    "rank": e.rank_in_run,
-                    "close_price": e.close_price,
-                    "rule_composite_score": e.rule_composite_score,
-                    "llm_composite_score": e.llm_composite_score,
-                    "final_composite_score": e.final_composite_score,
-                    "recommendation": e.recommendation,
-                    "verdict": e.verdict,
-                    "predicted_buy_price": e.predicted_buy_price,
-                    "predicted_target_price": e.predicted_target_price,
-                    "predicted_stop_loss": e.predicted_stop_loss,
-                    "report_json": json.loads(e.report_json)
-                    if e.report_json
-                    else None,
-                    "analysis_json": json.loads(e.analysis_process_json)
-                    if e.analysis_process_json
-                    else None,
-                }
-                for e in entries
-            ],
+            "entries": [_safe_entry(e) for e in entries],
         }
     finally:
         db.close()
@@ -191,17 +201,40 @@ async def get_pick_entry(entry_id: int):
 @router.get("/picks/latest")
 async def get_latest_picks(
     run_kind: str = Query(default="scan", description="scan|llm_top300"),
-    top_n: int = Query(default=30, le=100),
+    top_n: int = Query(default=30, le=300),
 ):
-    """获取最新一次选股的 Top N 榜单（前端首页用）。"""
+    """获取最新选股的 Top N 榜单（优先取条目数足够的最近 run）。"""
     db = SessionLocal()
     try:
-        run = db.scalar(
+        # 找最近几个 run，选条目数 >= top_n 的
+        candidates = db.scalars(
             select(PickRun)
             .where(PickRun.run_kind == run_kind)
             .order_by(desc(PickRun.created_at_utc))
-            .limit(1)
-        )
+            .limit(20)
+        ).all()
+
+        run = None
+        for r in candidates:
+            cnt = db.scalar(
+                select(func.count()).select_from(PickEntry).where(PickEntry.run_id == r.id)
+            )
+            if cnt >= top_n:
+                run = r
+                break
+        # fallback: 用条目最多的 run
+        if not run and candidates:
+            best = None
+            best_cnt = 0
+            for r in candidates:
+                cnt = db.scalar(
+                    select(func.count()).select_from(PickEntry).where(PickEntry.run_id == r.id)
+                )
+                if cnt > best_cnt:
+                    best_cnt = cnt
+                    best = r
+            run = best
+
         if not run:
             return {"ok": False, "error": "no pick run found"}
 

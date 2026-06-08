@@ -279,31 +279,60 @@ def _reply_payload(
 
 
 def _pick_reply(pick: dict[str, Any], text: str) -> dict[str, Any]:
-    """构建选股回复，同时尝试推送走势图 + PDF 报告（若已生成）。"""
-    chart_path = pick.get("chart_path")
-    chart_macd_path = pick.get("chart_macd_path")
+    """构建选股回复，PDF 报告通过群机器人 webhook 推送。
+
+    文本回复使用 reply_markdown（企微 4096 字节限制），
+    便于嵌入可点击的资讯链接；reply_text 保留短版兜底。
+    """
     pdf_path = pick.get("pdf_path")
 
-    # 图片 + PDF 通过群机器人 webhook 推送
-    if chart_path:
+    # PDF 报告通过群机器人 webhook 推送（不再单独推送 K 线图，图表已嵌入 PDF）
+    if pdf_path:
         try:
-            from wechat_push import push_wechat_image, push_wechat_file
-            push_wechat_image(chart_path)
-            if chart_macd_path:
-                push_wechat_image(chart_macd_path)
-            if pdf_path:
-                push_wechat_file(pdf_path)
+            from wechat_push import push_wechat_file
+            push_wechat_file(pdf_path)
         except Exception:
-            logger.warning("图表/PDF 推送失败", exc_info=True)
+            logger.warning("PDF 推送失败", exc_info=True)
 
-    return _reply_payload(
-        str(pick.get("intent") or "pick"),
-        text,
-        ts_code=pick.get("ts_code"),
-        run_id=pick.get("run_id"),
-        chart_path=chart_path,
-        pdf_path=pdf_path,
-    )
+    # 构建可点击链接的 markdown 版（资讯 URL 使用 [标题](url) 格式）
+    md_text = _to_pick_markdown(text)
+    short_text = truncate_wechat_utf8(text, WECHAT_TEXT_MAX_BYTES)
+
+    result: dict[str, Any] = {
+        "ok": True,
+        "intent": str(pick.get("intent") or "pick"),
+        "reply_text": short_text if len(short_text.encode("utf-8")) <= WECHAT_TEXT_MAX_BYTES else "",
+        "reply_markdown": md_text,
+        "ts_code": pick.get("ts_code"),
+        "run_id": pick.get("run_id"),
+        "chart_path": pick.get("chart_path"),
+        "pdf_path": pdf_path,
+    }
+    return result
+
+
+def _to_pick_markdown(plain: str) -> str:
+    """将选股纯文本转为企微 markdown：纯文本 URL → [📎阅读原文](url) 可点击。"""
+    import re as _re
+    lines = plain.split("\n")
+    out: list[str] = []
+    prev_title: str | None = None  # 上一行标题（用于 URL 标签）
+    url_pattern = _re.compile(r"^( {2,})(https?://\S+)\s*$")
+    title_pattern = _re.compile(r"^· (.+)$")
+    for line in lines:
+        m = url_pattern.match(line)
+        if m:
+            url = m.group(2)
+            # 优先用上一行的标题文本，否则用"阅读原文"
+            label = (prev_title or "阅读原文")[:30]
+            out.append(f"[📎{label}]({url})")
+            prev_title = None
+            continue
+        # 记录标题行，供下一行 URL 使用
+        tm = title_pattern.match(line)
+        prev_title = tm.group(1)[:30] if tm else None
+        out.append(line)
+    return "\n".join(out)
 
 
 def _save_chat_history(
@@ -447,10 +476,7 @@ def _handle_inbound_text_impl(
     if re.match(r"^(筛选|题材|概念)\s*[：:\s]*(.+)", raw, re.IGNORECASE):
         pick = try_handle_pick(raw)
         if pick and pick.get("reply_text"):
-            text = truncate_wechat_utf8(
-                str(pick["reply_text"]), WECHAT_TEXT_MAX_BYTES
-            )
-            return _pick_reply(pick, text)
+            return _pick_reply(pick, str(pick["reply_text"]))
 
     # ── Topic 查询 ──
     m = re.match(r"查\s*(\S+)", raw)
@@ -472,19 +498,13 @@ def _handle_inbound_text_impl(
     if re.match(r"^(选股|打分|分析|研报|评股|查股|评分)\s*[：:\s]", raw, re.IGNORECASE):
         pick = try_handle_pick(raw)
         if pick and pick.get("reply_text"):
-            text = truncate_wechat_utf8(
-                str(pick["reply_text"]), WECHAT_TEXT_MAX_BYTES
-            )
-            return _pick_reply(pick, text)
+            return _pick_reply(pick, str(pick["reply_text"]))
 
     # 简单股票名/代码 → 直接深度分析（误判由 try_handle_pick 返回 None 兜底）
     if _looks_like_stock_query(raw):
         pick = try_handle_pick(raw)
         if pick and pick.get("reply_text"):
-            text = truncate_wechat_utf8(
-                str(pick["reply_text"]), WECHAT_TEXT_MAX_BYTES
-            )
-            return _pick_reply(pick, text)
+            return _pick_reply(pick, str(pick["reply_text"]))
 
     # ── Brain 驱动的统一对话 ──
     # 带多轮对话记忆：读取历史 → Brain → 保存 Q&A
