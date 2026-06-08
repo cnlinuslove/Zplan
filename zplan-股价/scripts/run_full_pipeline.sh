@@ -63,6 +63,11 @@ try:
     print(f"  {'规则打分':<12} {r[0]:>8,} 行  最新 {r[1]}")
 except: print(f"  {'规则打分':<12}         --  无数据")
 
+try:
+    r = s.execute(text("SELECT COUNT(*), MAX(updated_at) FROM concept_product_cache")).fetchone()
+    print(f"  {'概念产品':<12} {r[0]:>8,} 行  最新 {r[1]}")
+except: print(f"  {'概念产品':<12}         --  无数据")
+
 s.close()
 PYEOF
   exit 0
@@ -71,7 +76,7 @@ fi
 # ═══ 参数解析 ═══
 LITE=false; DRY=false
 for a in "$@"; do
-  case "$a" in --lite) LITE=true ;; --dry-run) DRY=true ;; esac
+  case "$a" in --lite|--skip-financial) LITE=true ;; --dry-run) DRY=true ;; esac
 done
 
 if $DRY; then
@@ -93,6 +98,14 @@ echo "  Z-Plan 全量数据管道  $(date)"
 echo "  ZPLAN_ROOT=$ZPLAN_ROOT  lite=$LITE"
 echo "══════════════════════════════════════════════════"
 
+# 管道锁：防止并发跑，且僵尸锁不影响下次运行
+LOCK_FILE="$LOG_DIR/.pipeline_running"
+if [ -f "$LOCK_FILE" ]; then
+  echo "⚠️ 检测到残留锁文件（上次可能异常退出），继续执行"
+fi
+echo $$ > "$LOCK_FILE"
+trap "rm -f '$LOCK_FILE'" EXIT
+
 run_step() {
   local label="$1" cwd="$2"; shift 2
   echo ""
@@ -106,8 +119,9 @@ run_step() {
   fi
 }
 
-# 1. 股价日线
-run_step "股价日线" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" main.py --catch-up-panel --workers 6
+# 1. 股价日线（并行补齐当天截面，预计 ~40min）
+TODAY=$(date +%Y-%m-%d)
+run_step "股价日线" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" main.py --catch-up-panel --workers 6 --panel-date "$TODAY"
 run_step "补缺重试" "$PRICE_ROOT" "$PRICE_ROOT/.venv/bin/python" scripts/retry_missing_daily.py || true
 
 # 2. 衍生指标
@@ -160,10 +174,20 @@ echo "  日志: $LOG"
 
 # 企微播报
 echo ""; echo "=== [企微播报] $(date +%H:%M:%S) ==="
-if "$NEWS_ROOT/.venv/bin/python" "$PRICE_ROOT/scripts/pipeline_notify.py" "$LOG" 2>/dev/null; then
+NOTIFY_FLAGS=""
+[ "$fail_n" -gt 0 ] && NOTIFY_FLAGS="--alert"
+if "$NEWS_ROOT/.venv/bin/python" "$PRICE_ROOT/scripts/pipeline_notify.py" $NOTIFY_FLAGS "$LOG" 2>/dev/null; then
     echo "  ✅ 播报完成"
 else
     echo "  ⚠️ 播报失败（可能未配置 WECHAT_PUSH_WEBHOOK）"
+fi
+
+# 盘后 TOP10 复盘
+echo ""; echo "=== [TOP10复盘] $(date +%H:%M:%S) ==="
+if "$NEWS_ROOT/.venv/bin/python" "$NEWS_ROOT/scripts/evening_review.py" 2>/dev/null; then
+    echo "  ✅ TOP10 复盘完成"
+else
+    echo "  ⚠️ TOP10 复盘失败（可能无选股数据或未配置 WECHAT_PUSH_WEBHOOK）"
 fi
 
 find "$LOG_DIR" -name "full_pipeline_*.log" -mtime +30 -delete 2>/dev/null || true

@@ -996,6 +996,19 @@ def _migrate_pattern_tables() -> None:
                     "ON pattern_predictions (model_version)"
                 )
             )
+        if "concept_product_cache" not in existing_tables:
+            conn.execute(
+                text(
+                    """CREATE TABLE concept_product_cache (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts_code VARCHAR(16) NOT NULL,
+                        concept_name VARCHAR(128) NOT NULL,
+                        product_summary TEXT NOT NULL,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(ts_code, concept_name)
+                    )"""
+                )
+            )
 
 
 def _migrate_chat_history() -> None:

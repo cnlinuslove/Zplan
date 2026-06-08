@@ -664,10 +664,17 @@ def run_incremental_update(
     return stats
 
 
-def symbols_missing_panel_date(panel_date: date | None = None) -> list[str]:
-    """库内尚无 ``panel_date``（qfq）日线行的 ``ts_code`` 列表（默认全库最新交易日）。"""
+def symbols_missing_panel_date(
+    panel_date: date | None = None,
+    *,
+    market: str = "a",
+) -> list[str]:
+    """库内尚无 ``panel_date``（qfq）日线行的 ``ts_code`` 列表（默认全库最新交易日）。
+
+    ``market`` 过滤避免港股混入 A 股补齐（反之亦然）。
+    """
     init_db()
-    target = panel_date or db_latest_trade_date()
+    target = panel_date or db_latest_trade_date(market=market)
     if target is None:
         return []
     with SessionLocal() as session:
@@ -676,10 +683,13 @@ def symbols_missing_panel_date(panel_date: date | None = None) -> list[str]:
                 select(DailyPrice.ts_code).where(
                     DailyPrice.trade_date == target,
                     DailyPrice.adjust_type == DEFAULT_ADJUST_TYPE,
+                    DailyPrice.market == market,
                 )
             ).scalars().all()
         )
-        all_codes = session.execute(select(StockList.ts_code)).scalars().all()
+        all_codes = session.execute(
+            select(StockList.ts_code).where(StockList.market == market)
+        ).scalars().all()
     return [c for c in all_codes if c not in have]
 
 

@@ -33,6 +33,7 @@ def run_trend_agent(
     chip: bool = False,
     catchup_panel: bool = False,
     catchup_workers: int | None = None,
+    panel_date: str | None = None,
     market: str = "a",
 ) -> dict:
     """股价 Agent：同步 A 股 / 港股日线到共享库 ``daily_prices``。"""
@@ -70,7 +71,9 @@ def run_trend_agent(
 
     # ── A 股分支（原有逻辑）──
     if catchup_panel:
-        catchup_stats = run_catchup_panel_update(limit=limit, workers=catchup_workers)
+        import datetime as _dt
+        _panel_date = _dt.date.fromisoformat(panel_date) if panel_date else None
+        catchup_stats = run_catchup_panel_update(limit=limit, panel_date=_panel_date, workers=catchup_workers)
     elif a1:
         a1_stats = run_a1_update(
             limit=limit,
@@ -203,6 +206,13 @@ def main() -> None:
         help="仅补齐缺最新交易日截面的股票（选股 init-rule 前推荐）",
     )
     parser.add_argument(
+        "--panel-date",
+        type=str,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="补齐指定截面日期（默认自动检测最新面板日）",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=None,
@@ -226,6 +236,7 @@ def main() -> None:
         chip=args.chip,
         catchup_panel=args.catch_up_panel,
         catchup_workers=args.workers,
+        panel_date=args.panel_date,
         market=args.market,
     )
     logger.info("完成: %s", result)
