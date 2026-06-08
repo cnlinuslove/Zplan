@@ -174,21 +174,22 @@ def factor_days_since_high(feat: dict[str, float | None]) -> float:
     """距 60 日高点越远（即涨幅已回吐），反弹空间越大。
 
     high_60d_pct < 80% 表示从 60 日高点跌了 20%+。
+    回测验证：near_60d_high=10/10，需加强高位扣分。
     """
     h60 = _safe_float(feat, "high_60d_pct")
     if h60 is None:
         return 0.0
     if h60 < 70:
-        return 25.0
+        return 30.0
     if h60 < 80:
-        return _clamp(10.0 + (80 - h60) / 10 * 15)
-    if h60 < 88:
-        return _clamp(2.0 + (88 - h60) / 8 * 8)
-    if h60 <= 95:
+        return _clamp(10.0 + (80 - h60) / 10 * 20)
+    if h60 < 85:
+        return _clamp(2.0 + (85 - h60) / 5 * 8)
+    if h60 <= 90:
         return 0.0
-    if h60 <= 98:
-        return -5.0
-    return -10.0  # 接近最高点风险大
+    if h60 <= 95:
+        return _clamp(-5.0 - (h60 - 90) / 5 * 10, lo=-15)
+    return -20.0  # 接近最高点风险极大
 
 
 # ═══════════════════════════════════════════════════════
