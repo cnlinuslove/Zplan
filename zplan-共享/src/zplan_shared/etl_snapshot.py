@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime
 
 import akshare as ak
 import pandas as pd
 from sqlalchemy.dialects.sqlite import insert
 
-from zplan_shared.http_client import configure_akshare_http, throttle
+from zplan_shared.http_client import configure_akshare_http
 from zplan_shared.market import latest_trade_date
 from zplan_shared.models import DailySnapshot, SessionLocal, StockList, init_db
 from sqlalchemy import select
@@ -19,6 +22,7 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_SOURCE_EM = "akshare_em_snapshot"
 SNAPSHOT_SOURCE_BAIDU = "akshare_baidu_valuation"
 _UPSERT_BATCH = 100
+_DB_WRITE_LOCK = threading.Lock()
 
 
 def _mv_to_yuan(value: float | None) -> float | None:
@@ -167,24 +171,64 @@ def run_daily_snapshot_update(*, limit: int | None = None) -> dict[str, int]:
     if limit:
         symbols = symbols[:limit]
 
-    rows: list[dict] = []
-    for idx, symbol in enumerate(symbols, 1):
-        if idx % 50 == 0:
-            logger.info("[INFO] snapshot 百度 [%s/%s]", idx, len(symbols))
-        try:
-            row = _fetch_snapshot_baidu_one(symbol, trade_date)
-            if row:
-                rows.append(row)
-                stats["ok"] += 1
-            else:
-                stats["fail"] += 1
-        except Exception as exc:
-            stats["fail"] += 1
-            logger.warning("[WARN] %s snapshot 失败: %s", symbol, exc)
-        throttle(float(os.getenv("SNAPSHOT_BAIDU_INTERVAL", "0.4")))
+    n_workers = int(os.getenv("SNAPSHOT_WORKERS", "6"))
+    n_workers = max(1, min(n_workers, 16))
+    base_interval = float(os.getenv("SNAPSHOT_BAIDU_INTERVAL", "0.4"))
+    interval = max(0.05, base_interval / n_workers)
 
-    if rows:
-        stats["rows"] = upsert_daily_snapshot(rows)
+    logger.info(
+        "[INFO] snapshot 百度 workers=%s interval=%.2fs/票 (%s 只)",
+        n_workers, interval, len(symbols),
+    )
+
+    all_rows: list[dict] = []
+    ok = 0
+    fail = 0
+    done = 0
+
+    with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        futures = {
+            pool.submit(_baidu_worker, (sym, trade_date, interval)): sym
+            for sym in symbols
+        }
+        for fut in as_completed(futures):
+            done += 1
+            sym = futures[fut]
+            try:
+                row = fut.result()
+            except Exception as exc:
+                fail += 1
+                if done % 100 == 0 or done == len(symbols):
+                    logger.warning("[WARN] snapshot 百度 [%s/%s] fail=%s", done, len(symbols), fail)
+                continue
+            if row:
+                all_rows.append(row)
+                ok += 1
+            else:
+                fail += 1
+            if done % 100 == 0 or done == len(symbols):
+                logger.info(
+                    "[INFO] snapshot 百度 [%s/%s] ok=%s fail=%s",
+                    done, len(symbols), ok, fail,
+                )
+
+    stats["ok"] = ok
+    stats["fail"] = fail
+    if all_rows:
+        stats["rows"] = upsert_daily_snapshot(all_rows)
     stats["source"] = SNAPSHOT_SOURCE_BAIDU
     logger.info("[INFO] daily_snapshot 完成: %s", stats)
     return stats
+
+
+def _baidu_worker(args: tuple[str, date, float]) -> dict | None:
+    """单票百度估值抓取（进程内调用）。"""
+    symbol, trade_date, interval = args
+    configure_akshare_http()
+    try:
+        row = _fetch_snapshot_baidu_one(symbol, trade_date)
+        time.sleep(interval)
+        return row
+    except Exception:
+        time.sleep(max(interval, 1.0))
+        return None

@@ -88,7 +88,7 @@ if $DRY; then
   echo "  3. 估值截面"
   if $LITE; then echo "  4. 季报财务 → 跳过"; else echo "  4. 季报财务"; fi
   echo "  5. 资讯同步"
-  if $LITE; then echo "  6. 规则打分 → 跳过"; else echo "  6. 规则打分"; fi
+  echo "  6. 规则打分（每日）"
   exit 0
 fi
 
@@ -147,14 +147,8 @@ fi
 # 5. 资讯
 run_step "资讯同步" "$NEWS_ROOT" "$NEWS_ROOT/.venv/bin/python" -m sentiment_etl.runner
 
-# 6. 规则打分
-if $LITE; then
-  echo ""; echo "=== [规则打分] $(date +%H:%M:%S) ==="
-  echo "  ⏭️ 规则打分 跳过（--lite）"
-  add_step "规则打分" "SKIP"
-else
-  run_step "规则打分" "$PICK_ROOT" "$PICK_ROOT/.venv/bin/python" main.py init-rule
-fi
+# 6. 规则打分（每日运行，日线更新后自动重打分）
+run_step "规则打分" "$PICK_ROOT" "$PICK_ROOT/.venv/bin/python" main.py init-rule
 
 # 汇总
 echo ""
