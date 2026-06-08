@@ -1,5 +1,5 @@
 version: "1"
-rule_version: "pick-2026-06-anti-chase"
+rule_version: "pick-2026-06-anti-chase-v2"
 
 scan:
   min_bars: 60
@@ -20,10 +20,10 @@ filters:
   max_pe_ttm: null
   min_total_mv: null
   max_total_mv: null
-  max_ret_20d: 5.0    # ML r=-0.56：>5% 反转概率陡升，预筛直接剔除
-  max_high_60d_pct: 0.95  # 接近 60 日高点 >95% 剔除（追高空间有限）
+  max_ret_20d: 3.0    # 回测验证：>3% 追高风险显著上升，收紧过滤
+  max_high_60d_pct: 0.92  # 接近 60 日高点 >92% 剔除（增强追高保护）
   # ── 筹码峰（灰度开关，默认关闭）──
-  enable_chip_factors: false    # 是否启用筹码峰因子（需 daily_chip 表有数据）
+  enable_chip_factors: true     # 是否启用筹码峰因子（需 daily_chip 表有数据）
   min_concentration_90: null     # 最低 90% 集中度过滤（null=不启用，建议 0.05~0.3）
   max_profit_ratio: null         # 最高获利比例过滤（null=不启用，建议 85~95）
 
@@ -66,10 +66,10 @@ rule_init:
   llm_top_n: 300
   llm_batch_size: 10   # 每批简评只数
 
-# 最终排序：规则分为主，LLM 风险扣分微调（回测验证 LLM 分无预测能力）
+# 最终排序：LLM 综合分为主，规则分做候选池约束（buy_unreachable 修复后 LLM 主导）
 ranking:
-  mode: rule_filtered      # rule_filtered | rule_primary | blend | llm_primary
-  llm_weight: 0.75         # mode=blend 时生效
-  rule_weight: 0.25
-  llm_risk_penalty: 8.0    # LLM 发现严重风险时最大扣分幅度
+  mode: llm_primary        # rule_filtered | rule_primary | blend | llm_primary
+  llm_weight: 0.80         # mode=blend 时生效
+  rule_weight: 0.20
+  llm_risk_penalty: 5.0    # 适度惩罚（不宜过大，避免 LLM 不敢给分）
   resort_after_llm: true   # LLM 简评后按最终分重排再写入 rank

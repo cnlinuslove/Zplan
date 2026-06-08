@@ -175,7 +175,7 @@ def _build_prompt(base_report: dict[str, Any], bars_table: list[dict[str, Any]])
 5. **资讯**：解读关联新闻与事件类型；无新闻则 news_score 取 50。
 6. **竞争力与产品**：如有【公司档案/行业对比/研报/机构持仓】数据，须在 company_summary 中分析公司核心产品与竞争壁垒，在 opportunities 中引用券商评级和盈利预测，在 risks 中标注机构持仓变化风险。
 7. **综合打分 composite_score**（0-100）与 recommendation（五选一）；追高风险时 composite 不得高于规则引擎综合分。
-8. buy_price 不得高于最新 close×0.99；target/stop 须与走势一致。
+8. buy_price 必须在 **[close×0.98, close×1.0]** 区间内。A 股 T+1 场景下，次日开盘正常滑点约 0-2%，买入价最多只应低于收盘价 2%。若规则引擎给的「规则建议买卖价」中 suggested_buy 在此区间，**必须直接采用**。禁止设定低于 close×0.98 的买入价（回测验证此类买价 100% unreachable）。target ≥ buy_price×1.05；stop 须与支撑位一致。
 9. scenarios：基准/回调/破位/突发利空等 3-4 条可执行策略。
 10. 输出合法 JSON，字段符合 schema；中文撰写。"""
 
@@ -637,7 +637,7 @@ def brief_review_scan_picks(
     batch_size: int | None = None,
     per_stock: bool | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """扫描候选：LLM 简评。默认逐只调用（稳）；``per_stock=False`` 时走批量。"""
+    """扫描候选：LLM 简评。默认批量模式（省 ~80% tokens）；``per_stock=True`` 时逐只调用。"""
     if not picks:
         return [], None
     if not gemini_available():
@@ -645,7 +645,9 @@ def brief_review_scan_picks(
 
     use_per_stock = per_stock
     if use_per_stock is None:
-        use_per_stock = __import__("os").getenv("PICK_LLM_BRIEF_PER_STOCK", "true").lower() in (
+        # 默认批量模式（节省 ~80% prompt tokens + 10x 墙钟加速）。
+        # 逐只调试：export PICK_LLM_BRIEF_PER_STOCK=true
+        use_per_stock = __import__("os").getenv("PICK_LLM_BRIEF_PER_STOCK", "false").lower() in (
             "1",
             "true",
             "yes",
