@@ -749,20 +749,21 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
             ),
         }
 
-    # 按综合分降序排列
+    # 按综合分降序排列，先取 top 30 宽池
     score_col = "rule_composite_score"
     if score_col in df.columns:
         df = df.sort_values(score_col, ascending=False, na_position="last")
 
     total = len(df)
-    show = df.head(limit)
+    # 题材筛选用全量成分股做池子（不做规则分截断），靠 LLM 相关度区分
+    pool = df  # 全量：让三博脑科（规则35分）也能靠相关度冲进 TOP10
 
     strat = load_strategy()
     sd = latest_score_date(rule_version=strat.rule_version)
     score_date = str(sd) if sd else "最新"
 
-    # 批量获取 ret_20d + 信号 + PE/市值（Top 20 只）
-    top_codes = tuple(show["ts_code"].values)
+    # 批量获取 ret_20d + 信号 + PE/市值（宽池）
+    top_codes = tuple(pool["ts_code"].values)
     ret_map: dict[str, float | None] = {}
     sig_map: dict[str, list[str]] = {}
     pe_map: dict[str, float | None] = {}
@@ -819,22 +820,47 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
     except Exception:
         logger.warning("获取扩展数据失败", exc_info=True)
 
-    # ── 产品摘要（LLM 批量 + 缓存）──
+    # ── 产品摘要（LLM 批量 + 缓存，含相关度评分）──
     product_map: dict[str, str] = {}
+    relevance_map: dict[str, int] = {}
     try:
-        from zplan_shared.concept_product import generate_product_summaries
-        name_map = {}
-        for _, row in show.iterrows():
-            name_map[str(row["ts_code"])] = str(row.get("name", ""))
-        product_map = generate_product_summaries(
-            list(top_codes), concept_query, names=name_map
+        from zplan_shared.concept_product import (
+            generate_product_summaries,
+            get_concept_relevance_scores,
         )
+        name_map = {}
+        for _, row in pool.iterrows():
+            name_map[str(row["ts_code"])] = str(row.get("name", ""))
+        # 先看缓存里有相关度分吗，没有就 force_refresh
+        existing_rel = get_concept_relevance_scores(list(top_codes), concept_query)
+        need_refresh = any(c not in existing_rel for c in top_codes)
+        product_map = generate_product_summaries(
+            list(top_codes), concept_query,
+            names=name_map,
+            force_refresh=need_refresh,
+        )
+        relevance_map = get_concept_relevance_scores(list(top_codes), concept_query)
     except Exception:
         logger.warning("产品摘要获取失败", exc_info=True)
 
+    # ── 综合排序：规则分(50%) + LLM 概念相关度(50%) ──
+    pool = pool.copy()
+    pool["llm_relevance"] = pool["ts_code"].apply(
+        lambda c: relevance_map.get(str(c), 50)  # 默认 50（中性）
+    )
+    pool["concept_composite"] = pool.apply(
+        lambda r: (
+            float(r.get(score_col, 0) or 0) * 0.5
+            + float(r.get("llm_relevance", 50)) * 0.5
+        ),
+        axis=1,
+    )
+    pool = pool.sort_values("concept_composite", ascending=False, na_position="last")
+    show = pool.head(limit)
+
     lines = [
         f"【题材筛选 · {concept_query}】",
-        f"共 {total} 只  |  按规则综合分排序  |  数据 {score_date}",
+        f"共 {total} 只  |  综合排名（规则分×0.5 + LLM概念相关度×0.5）  |  数据 {score_date}",
         "",
     ]
 
@@ -868,10 +894,16 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
         sigs = sig_map.get(code, [])
         sig_str = " · ".join(str(s) for s in sigs[:2]) if sigs else ""
 
-        # 第一行：排名. 名(码) ¥价 · 建议买入 · 规则分+结论
+        # 第一行：排名. 名(码) ¥价 · 综合分(规则+LLM相关度) · 建议买入
         meta = []
-        if score_val is not None:
-            meta.append(f"规则{score_val}分")
+        rule_val = score_val
+        rel_val = row.get("llm_relevance")
+        comp_val = row.get("concept_composite")
+        rel_str_display = f"概念相关度{int(rel_val)}" if rel_val is not None and str(rel_val) != "nan" else ""
+        if comp_val is not None and str(comp_val) != "nan":
+            meta.append(f"综合{float(comp_val):.0f}分")
+        if rule_val is not None:
+            meta.append(f"规则{rule_val}")
         if verdict_str:
             meta.append(verdict_str)
         if price_str:
@@ -880,7 +912,7 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
             meta.append(f"建议买入 ¥{buy_price}")
         line1 = f"{i+1:2d}. {name}({code})  {' · '.join(meta)}"
 
-        # 第二行：PE / 市值 / 20日走势
+        # 第二行：PE / 市值 / 20日走势 / 概念相关度
         detail = []
         if pe_str:
             detail.append(pe_str)
@@ -888,6 +920,8 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
             detail.append(mv_str)
         if ret20_str:
             detail.append(ret20_str)
+        if rel_str_display:
+            detail.append(rel_str_display)
         line2 = f"    { '  |  '.join(detail) }" if detail else ""
 
         # 第三行：信号

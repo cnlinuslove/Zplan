@@ -220,15 +220,25 @@ def _compute_summary(analyzed: list[dict[str, Any]]) -> dict[str, Any]:
 
     buy_reached = sum(1 for a in with_data if a.get("buy_reached"))
 
-    # 判断评级准确性（看多且上涨 = 正确，看空且下跌 = 正确）
+    # 选股方向准确性：TOP10 本身隐含看多，上涨 = 方向正确
+    # "看空"/"偏空"/"回避" 为逆势推荐（一般不应出现在 TOP10）
     correct = 0
+    wrong_signal = 0  # 看空却上涨 or 看多却下跌
     for a in with_data:
         v = a.get("verdict", "")
         p = a["pct_chg"] or 0
-        if v in ("看多", "偏多", "关注", "强烈关注") and p > 0:
-            correct += 1
-        elif v in ("看空", "偏空", "谨慎", "回避") and p < 0:
-            correct += 1
+        if v in ("看空", "偏空", "回避"):
+            # 逆势推荐：下跌才算正确
+            if p < 0:
+                correct += 1
+            else:
+                wrong_signal += 1
+        else:
+            # 中性 / 偏多 / 关注 / 强烈关注：上涨才算正确
+            if p > 0:
+                correct += 1
+            else:
+                wrong_signal += 1
     verdict_acc = f"{correct}/{len(with_data)}" if with_data else "N/A"
 
     return {
@@ -327,15 +337,42 @@ def _format_evening_markdown(
     date_str = beijing_now.strftime("%Y-%m-%d")
     weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][beijing_now.weekday()]
 
+    # 计算选股距今时间
+    pick_age_note = ""
+    try:
+        pick_d = date.fromisoformat(pick_label)
+        today_d = date.fromisoformat(today_label)
+        gap = (today_d - pick_d).days
+        if gap > 3:
+            pick_age_note = f" ⚠️ 选股已过 {gap} 天，信号可能严重衰减"
+        elif gap > 1:
+            pick_age_note = f" 📎 选股距今 {gap} 天"
+    except (ValueError, TypeError):
+        pass
+
     lines = [
         f"## 🌅 Z-Plan TOP10 盘后复盘",
-        f"> {date_str} {weekday} · 选股日 {pick_label} · 行情日 {today_label}",
+        f"> 发送日 {date_str} {weekday} · 行情日 **{today_label}** · 选股日 {pick_label}{pick_age_note}",
         "",
     ]
 
     # ── 汇总面板 ──
-    lines.append("### 📊 今日表现总览")
+    lines.append(f"### 📊 {today_label} 表现总览")
     lines.append("")
+
+    # 选股过期醒目警告
+    try:
+        pick_d = date.fromisoformat(pick_label)
+        today_d = date.fromisoformat(today_label)
+        gap = (today_d - pick_d).days
+        if gap >= 7:
+            lines.append(f"> ⚠️⚠️ **选股数据已过 {gap} 天，严重过期！请尽快运行选股流水线：`make llm-top`**")
+            lines.append("")
+        elif gap > 3:
+            lines.append(f"> ⚠️ 选股距今 {gap} 天，信号可能衰减，建议尽快更新选股")
+            lines.append("")
+    except (ValueError, TypeError):
+        pass
     avg_ret = summary["avg_return"]
     emoji = "🟢" if avg_ret > 0 else ("🔴" if avg_ret < 0 else "⚪")
     lines.append(
@@ -409,18 +446,26 @@ def _format_evening_markdown(
     return "\n".join(lines)
 
 
-def _should_skip_today(today: date | None) -> bool:
-    """周末跳过。"""
+def _should_skip_today(today: date | None) -> tuple[bool, str]:
+    """检查是否应该跳过复盘。
+
+    核心逻辑：只有当 daily_prices 最新交易日 == 北京时间今天，才说明当日盘后管道已跑完，
+    否则说明当日数据尚未入库，不应发送"今日复盘"。
+    """
     if today is None:
-        return False
+        return True, "daily_prices 无数据"
     beijing_now = datetime.now(BEIJING_TZ)
+    today_beijing = beijing_now.date()
     if beijing_now.weekday() >= 5:
-        return True
-    return False
+        return True, "周末跳过"
+    if today < today_beijing:
+        return True, f"当日行情尚未入库（最新交易日: {today}，北京今天: {today_beijing}），等待盘后管道"
+    return False, "ok"
 
 
 def main():
     dry_run = "--dry-run" in sys.argv
+    force = "--force" in sys.argv
 
     # 解析 --run-id
     run_id: int | None = None
@@ -434,9 +479,12 @@ def main():
     with SessionLocal() as session:
         today = _get_latest_trade_date(session)
 
-        if _should_skip_today(today):
-            print(f"[{datetime.now(BEIJING_TZ):%Y-%m-%d %H:%M}] 周末，跳过复盘")
+        should_skip, skip_reason = _should_skip_today(today)
+        if should_skip and not force:
+            print(f"[{datetime.now(BEIJING_TZ):%Y-%m-%d %H:%M}] 跳过复盘: {skip_reason}")
             return
+        elif should_skip and force:
+            print(f"[{datetime.now(BEIJING_TZ):%Y-%m-%d %H:%M}] ⚠️ 强制运行（{skip_reason}）")
 
         entries, run, pick_date = _load_top10_from_run(session, run_id)
 

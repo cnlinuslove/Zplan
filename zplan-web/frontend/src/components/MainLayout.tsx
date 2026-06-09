@@ -48,9 +48,11 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             color: '#fff',
             fontWeight: 700,
             fontSize: collapsed ? 14 : 18,
+            flexDirection: 'column',
           }}
         >
-          {collapsed ? 'ZP' : 'Z-Plan'}
+          <span>{collapsed ? 'ZP' : 'Z-Plan'}</span>
+          {!collapsed && <span style={{ fontSize: 9, color: '#888', fontWeight: 400 }}>build: {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'dev'}</span>}
         </div>
         <Menu
           theme="dark"

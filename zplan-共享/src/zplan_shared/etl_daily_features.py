@@ -54,7 +54,7 @@ def upsert_daily_features(rows: list[dict]) -> int:
 
 def run_daily_features_update(
     *,
-    as_of: date | None = None,
+    as_of: date | str | None = None,
     calendar_days: int = 150,
     min_bars: int | None = None,
     limit: int | None = None,
@@ -65,6 +65,8 @@ def run_daily_features_update(
     """
     init_db()
     min_bars = min_bars if min_bars is not None else _MIN_BARS
+    if isinstance(as_of, str):
+        as_of = date.fromisoformat(as_of[:10])
     trade_date = as_of or latest_trade_date(market=market)
     if trade_date is None:
         return {"ok": 0, "rows": 0, "trade_date": None}

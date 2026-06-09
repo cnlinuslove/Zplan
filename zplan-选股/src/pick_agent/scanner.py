@@ -148,8 +148,13 @@ def scan_universe(
     if not feat_df.empty:
         feat_df = feat_df[feat_df["ts_code"].isin(codes)]
     if feat_df.empty or len(feat_df) < max(50, len(codes) // 4):
-        history = get_history_window(end=trade_date, calendar_days=150, ts_codes=codes, market=market)
-        feat_df = scan_universe_features(history, min_bars=min_bars)
+        return {
+            "ok": False,
+            "message": f"daily_features 不完整（{len(feat_df)}/{len(codes)}），请等待 daily_features 物化完成后再运行 scan",
+            "scanned": len(panel),
+            "qualified": 0,
+            "picks": [],
+        }
     feat_df = _apply_feature_filters(feat_df, strat)
     if feat_df.empty:
         return {

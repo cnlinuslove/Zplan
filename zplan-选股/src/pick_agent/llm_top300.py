@@ -1,6 +1,7 @@
 """规则分 Top N → 深度规则复核 → LLM 二次打分 → ``pick_runs``。"""
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,6 +26,7 @@ from pick_agent.scoring import (
     financial_score_from_rows,
     industry_relative_score,
     intraday_adjust,
+    momentum_penalty,
     news_score,
 )
 from pick_agent.scanner import _load_stock_meta
@@ -79,7 +81,15 @@ def _deepen_one_pick(
     elif tech.close is not None:
         close = tech.close
     bars = get_bars(code)
-    levels = price_levels(bars) if not bars.empty else {}
+    # 截断到 trade_date，确保买入价基于选股日收盘价而非最新K线
+    bars_for_price = bars
+    if not bars.empty and trade_date is not None:
+        # get_bars 返回的 index 是 date 对象，需转为 DatetimeIndex 才能与 Timestamp 比较
+        bars.index = pd.DatetimeIndex(pd.to_datetime(bars.index))
+        bars_for_price = bars[bars.index <= pd.Timestamp(trade_date)]
+        if bars_for_price.empty:
+            bars_for_price = bars
+    levels = price_levels(bars_for_price) if not bars_for_price.empty else {}
     return attach_concepts({
         **p,
         "name": p.get("name") or ctx.get("name"),
@@ -149,6 +159,20 @@ def _deepen_picks(
     return out
 
 
+def _compute_prompt_hash(strategy: PickStrategy) -> str:
+    """计算本次运行的 prompt + 策略指纹（用于回溯：这次 run 用了什么配置）。"""
+    from pick_agent.llm_research import _LLM_BRIEF_RULES
+
+    payload = (
+        _LLM_BRIEF_RULES
+        + str(strategy.rule_version)
+        + str(strategy.weights)
+        + str(strategy.filters)
+        + str(strategy.llm_model)
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def run_llm_top_from_rule_scores(
     *,
     top_n: int | None = None,
@@ -159,11 +183,16 @@ def run_llm_top_from_rule_scores(
     deepen_workers: int | None = None,
     use_llm: bool = True,
     persist: bool = True,
+    variant_label: str | None = None,
 ) -> dict[str, Any]:
-    """从 ``stock_rule_scores`` 取 Top N，深度规则 + LLM 简评，写入 ``pick_runs``。"""
+    """从 ``stock_rule_scores`` 取 Top N，深度规则 + LLM 简评，写入 ``pick_runs``。
+
+    ``variant_label`` 用于 A/B 实验标记（同一天多策略并行对比）。
+    """
     strat = strategy or load_strategy()
     top_n = top_n if top_n is not None else strat.llm_top_n
     batch_size = batch_size if batch_size is not None else strat.llm_batch_size
+    prompt_hash = _compute_prompt_hash(strat)
     as_of_d = trade_date_as_of
     if as_of_d is None:
         as_of_d = latest_score_date(rule_version=strat.rule_version)
@@ -187,9 +216,15 @@ def run_llm_top_from_rule_scores(
         if deepen
         else list(shallow)
     )
+    # 排序对齐 scan：composite_score − momentum_penalty(ret_20d)
+    max_ret_20d = strat.filters.get("max_ret_20d") if strat.filters else None
     picks = sorted(
         picks,
-        key=lambda x: (x.get("composite_score") or 0, x.get("tech_score") or 0),
+        key=lambda x: (
+            (x.get("composite_score") or 0)
+            - momentum_penalty(x.get("ret_20d"), max_ret_20d=max_ret_20d),
+            x.get("tech_score") or 0,
+        ),
         reverse=True,
     )
 
@@ -221,6 +256,8 @@ def run_llm_top_from_rule_scores(
         "qualified": len(picks),
         "llm_scan_brief": use_llm and gemini_available(),
         "llm_usage": llm_usage,
+        "variant_label": variant_label,
+        "prompt_hash": prompt_hash,
     }
 
     if persist:
@@ -232,6 +269,8 @@ def run_llm_top_from_rule_scores(
                 "source": "stock_rule_scores",
                 "deepen": deepen,
             },
+            variant_label=variant_label,
+            prompt_hash=prompt_hash,
         )
         result["run_id"] = run_id
 

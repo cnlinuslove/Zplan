@@ -164,6 +164,7 @@ def run_full_pipeline(
     catchup_workers: int | None = None,
     deepen_workers: int | None = None,
     deep_llm_workers: int | None = None,
+    variant_label: str | None = None,
 ) -> dict[str, Any]:
     """init-rule → llm-top → deep-top。"""
     strat = strategy or load_strategy()
@@ -199,6 +200,7 @@ def run_full_pipeline(
         deepen_workers=deepen_workers,
         use_llm=True,
         persist=True,
+        variant_label=variant_label,
     )
     out["llm_top"] = llm_r
     if not llm_r.get("ok"):

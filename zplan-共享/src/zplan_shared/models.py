@@ -1025,7 +1025,7 @@ def _migrate_pattern_tables() -> None:
 
 
 def _migrate_concept_product_v2() -> None:
-    """concept_product_cache 补 web search 列（v2 迁移）。"""
+    """concept_product_cache 补 web search + 相关度评分列（v2 迁移）。"""
     url = str(engine.url)
     if not url.startswith("sqlite"):
         return
@@ -1033,6 +1033,7 @@ def _migrate_concept_product_v2() -> None:
         ("search_results", "TEXT"),
         ("search_source", "VARCHAR(32)"),
         ("search_queried_at", "DATETIME"),
+        ("relevance_score", "INTEGER"),
     ]
     with engine.begin() as conn:
         existing = {

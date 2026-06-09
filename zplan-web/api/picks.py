@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import date
 from typing import Any
 
@@ -198,6 +199,24 @@ async def get_pick_entry(entry_id: int):
         db.close()
 
 
+@router.get("/picks/stock/{ts_code}")
+async def get_stock_report(ts_code: str):
+    """直接按股票代码查最新一条研报（含 markdown）。"""
+    db = SessionLocal()
+    try:
+        e = db.scalar(
+            select(PickEntry)
+            .where(PickEntry.ts_code == ts_code)
+            .order_by(desc(PickEntry.created_at_utc))
+            .limit(1)
+        )
+        if not e:
+            return {"ok": True, "entry": None}
+        return {"ok": True, "entry": _safe_entry(e)}
+    finally:
+        db.close()
+
+
 @router.get("/picks/latest")
 async def get_latest_picks(
     run_kind: str = Query(default="scan", description="scan|llm_top300"),
@@ -329,6 +348,64 @@ def _run_scan(task_id: str, top_n: int, market: str) -> None:
             "progress": 0,
             "message": str(exc),
         }
+
+
+@router.post("/picks/research")
+async def generate_research(req: AnalyzeRequest, bg: BackgroundTasks):
+    """对单股触发 LLM 深度研报生成，结果存入数据库。"""
+    import sys
+    from pathlib import Path
+
+    task_id = uuid.uuid4().hex[:8]
+    _active_tasks[task_id] = {"status": "queued", "message": "排队中..."}
+
+    def _run_sync(tid: str, ts_code: str):
+        """同步执行（在后台线程中运行，不阻塞 event loop）。"""
+        try:
+            _active_tasks[tid] = {"status": "running", "message": "获取行情数据..."}
+            pick_src = str(Path(__file__).resolve().parents[2] / "zplan-选股" / "src")
+            if pick_src not in sys.path:
+                sys.path.insert(0, pick_src)
+
+            _active_tasks[tid] = {"status": "running", "message": "LLM 深度分析中（约 10-30 秒）..."}
+            from pick_agent.llm_research import research_with_llm, format_llm_report_markdown
+            from zplan_shared.pick_store import save_report_run
+
+            # pyarrow 可能未安装，mock pandas.read_parquet
+            try:
+                import pyarrow  # noqa: F401
+            except ImportError:
+                import pandas as _pd
+                _pd.read_parquet = lambda *a, **kw: _pd.DataFrame()
+            report = research_with_llm(ts_code)
+            md = format_llm_report_markdown(report)
+            run_id = save_report_run(report, markdown=md)
+            # 获取新创建的 entry id
+            from zplan_shared.models import SessionLocal as _Sl, PickEntry as _Pe
+            from sqlalchemy import select as _sel, desc as _desc
+            _db = _Sl()
+            try:
+                _e = _db.scalar(_sel(_Pe).where(_Pe.run_id == run_id).order_by(_desc(_Pe.id)).limit(1))
+                entry_id = _e.id if _e else None
+            finally:
+                _db.close()
+
+            _active_tasks[tid] = {
+                "status": "completed",
+                "message": "研报已生成",
+                "result": {
+                    "entry_id": entry_id,
+                    "ts_code": ts_code,
+                    "composite_score": report.get("llm", {}).get("composite_score"),
+                    "recommendation": report.get("llm", {}).get("recommendation"),
+                },
+            }
+        except Exception as exc:
+            logger.exception("研报生成失败 %s: %s", ts_code, exc)
+            _active_tasks[tid] = {"status": "failed", "message": str(exc)[:200]}
+
+    bg.add_task(_run_sync, task_id, req.ts_code)
+    return {"ok": True, "task_id": task_id, "status": "queued", "message": "研报生成已启动，约需 10-30 秒"}
 
 
 @router.get("/tasks/{task_id}")

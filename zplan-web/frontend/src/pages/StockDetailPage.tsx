@@ -1,9 +1,10 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Card, Descriptions, Tag, Button, Spin, Typography, Space, List, message, Image } from 'antd'
+import { Card, Descriptions, Tag, Button, Spin, Typography, Space, List, Image, message } from 'antd'
 import { ArrowLeftOutlined, StarOutlined, StarFilled, FundOutlined } from '@ant-design/icons'
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
+import ResearchButton from '../components/ResearchButton'
 import api from '../api/client'
 
 const { Title } = Typography
@@ -46,20 +47,12 @@ export default function StockDetailPage() {
     enabled: !!tsCode,
   })
 
-  // 查找最新选股分析（所有 run 类型）
+  // 直接按股票代码查最新研报
   const { data: pickEntry } = useQuery({
     queryKey: ['stock-pick', tsCode],
     queryFn: async () => {
-      // 先查 scan runs
-      let runsRes = await api.get('/picks/runs', { params: { limit: 10 } })
-      let runs = runsRes.data?.runs || []
-      for (const run of runs) {
-        const detail = await api.get(`/picks/runs/${run.id}`)
-        const entries = detail.data?.entries || []
-        const found = entries.find((e: any) => e.ts_code === tsCode)
-        if (found) { found._run_kind = run.run_kind; return found }
-      }
-      return null
+      const res = await api.get(`/picks/stock/${tsCode}`)
+      return res.data?.entry || null
     },
     enabled: !!tsCode,
   })
@@ -191,16 +184,20 @@ export default function StockDetailPage() {
             <Descriptions.Item label="判定">{pickEntry.verdict}</Descriptions.Item>
             <Descriptions.Item label="排名">#{pickEntry.rank}</Descriptions.Item>
           </Descriptions>
-          {pickEntry.markdown_report && (
+          {pickEntry.markdown_report ? (
             <div style={{ lineHeight: 1.8, maxHeight: 400, overflow: 'auto', marginTop: 12 }}>
               <ReactMarkdown>{pickEntry.markdown_report}</ReactMarkdown>
+            </div>
+          ) : (
+            <div style={{ marginTop: 12 }}>
+              <ResearchButton tsCode={tsCode!} />
             </div>
           )}
         </Card>
       ) : (
         <Card title="📝 选股分析" style={{ marginBottom: 16 }}>
           <p>该股票暂未出现在最新选股榜单中。</p>
-          <p>可在对话中发送「分析 {s.name}」触发 LLM 深度分析。</p>
+          <ResearchButton tsCode={tsCode!} label="🤖 一键生成深度研报" />
         </Card>
       )}
 

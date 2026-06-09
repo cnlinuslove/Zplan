@@ -48,11 +48,11 @@ def _entry_from_pick(p: dict[str, Any], *, rank: int | None = None) -> dict[str,
         "rank_in_run": rank,
         "rule_tech_score": p.get("tech_score"),
         "rule_composite_score": p.get("rule_composite_score") or p.get("composite_score"),
-        "llm_composite_score": p.get("llm_composite_score") or llm_block.get("composite_score"),
+        "llm_composite_score": p.get("llm_composite_score") or p.get("adjusted_score") or llm_block.get("composite_score"),
         "llm_technical_score": llm_block.get("technical_score"),
         "llm_financial_score": llm_block.get("financial_score"),
         "llm_news_score": llm_block.get("news_score"),
-        "final_composite_score": p.get("composite_score") or p.get("llm_composite_score"),
+        "final_composite_score": p.get("adjusted_score") or p.get("composite_score") or p.get("llm_composite_score"),
         "recommendation": llm_brief.get("recommendation") or llm_block.get("recommendation"),
         "verdict": p.get("verdict"),
         "close_price": p.get("close"),
@@ -121,6 +121,8 @@ def save_scan_run(
     result: dict[str, Any],
     *,
     params: dict[str, Any] | None = None,
+    variant_label: str | None = None,
+    prompt_hash: str | None = None,
 ) -> int:
     """保存全市场扫描结果，返回 ``run_id``。"""
     init_db()
@@ -141,12 +143,14 @@ def save_scan_run(
     }
     with SessionLocal() as session:
         run = PickRun(
-            run_kind="scan",
+            run_kind=result.get("run_kind") or "scan",
             trade_date_as_of=_parse_as_of(result.get("as_of")),
             rule_version=str(result.get("rule_version") or ""),
             llm_enabled=bool(result.get("llm_scan_brief")),
             llm_model=(result.get("llm_usage") or {}).get("model"),
             symbol_query=None,
+            variant_label=variant_label,
+            prompt_hash=prompt_hash,
             params_json=_dumps(params or {}),
             summary_json=_dumps(summary),
         )
@@ -227,6 +231,8 @@ def list_runs(*, limit: int = 30, run_kind: str | None = None) -> list[dict[str,
             "llm_enabled": r.llm_enabled,
             "llm_model": r.llm_model,
             "symbol_query": r.symbol_query,
+            "variant_label": r.variant_label,
+            "prompt_hash": r.prompt_hash,
             "summary": _loads(r.summary_json),
             "created_at_utc": r.created_at_utc.isoformat() + "Z",
         }
@@ -254,6 +260,8 @@ def get_run(run_id: int) -> dict[str, Any] | None:
             "llm_enabled": run.llm_enabled,
             "llm_model": run.llm_model,
             "symbol_query": run.symbol_query,
+            "variant_label": run.variant_label,
+            "prompt_hash": run.prompt_hash,
             "params": _loads(run.params_json),
             "summary": _loads(run.summary_json),
             "created_at_utc": run.created_at_utc.isoformat() + "Z",

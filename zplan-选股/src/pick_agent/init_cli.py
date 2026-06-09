@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import date
 
 from zplan_shared.llm.gemini import GeminiError
 
@@ -18,12 +19,15 @@ def main(argv: list[str] | None = None) -> None:
 
     p_init = sub.add_parser("init-rule", help="全市场规则分写入 stock_rule_scores")
     p_init.add_argument("--skip-health-check", action="store_true")
+    p_init.add_argument("--as-of", type=str, default=None, help="指定截面日期 YYYY-MM-DD（默认最新）")
     p_init.add_argument("--v2", action="store_true", help="使用 v2 评分（反转+资金流+概念热度）替代默认动量评分")
     p_init.add_argument("--strategy", type=str, default=None)
 
     p_llm = sub.add_parser("llm-top", help="规则分 Top N → 深度规则 + LLM 简评入库")
     p_llm.add_argument("--top", type=int, default=300, help="从 stock_rule_scores 取前 N（默认 300）")
     p_llm.add_argument("--batch-size", type=int, default=None, help="LLM 每批只数（默认 15，见 strategy.yaml）")
+    p_llm.add_argument("--as-of", type=str, default=None, help="指定截面日期 YYYY-MM-DD（默认最新）")
+    p_llm.add_argument("--variant", type=str, default=None, help="A/B 实验标签（如 baseline / strict / value）")
     p_llm.add_argument("--no-llm", action="store_true")
     p_llm.add_argument("--no-deepen", action="store_true", help="跳过深度规则复核")
     p_llm.add_argument("--no-save", action="store_true")
@@ -32,6 +36,7 @@ def main(argv: list[str] | None = None) -> None:
     p_pipe = sub.add_parser("pipeline", help="init-rule 后 llm-top（一步完成）")
     p_pipe.add_argument("--top", type=int, default=300)
     p_pipe.add_argument("--batch-size", type=int, default=None)
+    p_pipe.add_argument("--variant", type=str, default=None, help="A/B 实验标签")
     p_pipe.add_argument("--skip-health-check", action="store_true")
     p_pipe.add_argument("--no-llm", action="store_true")
     p_pipe.add_argument("--no-deepen", action="store_true")
@@ -52,6 +57,7 @@ def main(argv: list[str] | None = None) -> None:
     p_full.add_argument("--deepen-workers", type=int, default=8)
     p_full.add_argument("--deep-llm-workers", type=int, default=2)
     p_full.add_argument("--no-deepen", action="store_true")
+    p_full.add_argument("--variant", type=str, default=None, help="A/B 实验标签")
     p_full.add_argument("--strategy", type=str, default=None)
 
     p_deep = sub.add_parser("deep-top", help="对最近一次 llm-top 结果或指定 run 的 Top N 出深度研报")
@@ -65,10 +71,12 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         if args.cmd == "init-rule":
+            as_of = date.fromisoformat(args.as_of) if getattr(args, "as_of", None) else None
             result = build_rule_scores_universe(
                 strategy=strat,
                 skip_health_check=args.skip_health_check,
                 use_v2=getattr(args, "v2", False),
+                as_of=as_of,
             )
             if not result.get("ok"):
                 print(result.get("message", "失败"), file=sys.stderr)
@@ -81,13 +89,16 @@ def main(argv: list[str] | None = None) -> None:
             print("下一步：main.py llm-top --top 300")
 
         elif args.cmd == "llm-top":
+            as_of = date.fromisoformat(args.as_of) if getattr(args, "as_of", None) else None
             result = run_llm_top_from_rule_scores(
                 top_n=args.top,
                 batch_size=args.batch_size,
                 strategy=strat,
+                trade_date_as_of=as_of,
                 deepen=not args.no_deepen,
                 use_llm=not args.no_llm,
                 persist=not args.no_save,
+                variant_label=getattr(args, "variant", None),
             )
             _print_llm_top_result(result)
 
@@ -110,6 +121,7 @@ def main(argv: list[str] | None = None) -> None:
                 deepen=not args.no_deepen,
                 use_llm=not args.no_llm,
                 persist=not args.no_save,
+                variant_label=getattr(args, "variant", None),
             )
             print("[2/2] llm-top")
             _print_llm_top_result(result)
@@ -127,6 +139,7 @@ def main(argv: list[str] | None = None) -> None:
                 deepen=not args.no_deepen,
                 deepen_workers=args.deepen_workers,
                 deep_llm_workers=args.deep_llm_workers,
+                variant_label=getattr(args, "variant", None),
             )
             _print_pipeline_full_result(result)
 
@@ -199,11 +212,15 @@ def _print_llm_top_result(result: dict) -> None:
     print(f"\n规则分 Top{len(picks)} → LLM 简评（as_of={result.get('as_of')}）\n")
     for p in picks[:30]:
         brief = p.get("llm_brief") or {}
-        llm_s = p.get("llm_composite_score")
+        llm_s = p.get("llm_composite_score") or p.get("adjusted_score")
         rule_s = p.get("rule_composite_score") or p.get("composite_score")
+        risk_penalty = brief.get("risk_penalty") or 0
+        risk_str = f" -{risk_penalty:.0f}" if risk_penalty > 0 else ""
+        flags = ", ".join(brief.get("risk_flags") or [])
+        flag_str = f" [{flags}]" if flags and flags != "无明显风险" else ""
         print(
             f"{p.get('rank_in_run', '-'):3} {p.get('name') or '—':8} {p['ts_code']} "
-            f"规则={rule_s} LLM={llm_s or '—'} {brief.get('recommendation') or p.get('verdict') or ''}"
+            f"规则={rule_s} LLM={llm_s or '—'}{risk_str} {brief.get('recommendation') or p.get('verdict') or ''}{flag_str}"
         )
     if len(picks) > 30:
         print(f"... 另有 {len(picks) - 30} 只，见 --show-run")

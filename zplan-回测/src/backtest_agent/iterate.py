@@ -64,7 +64,7 @@ def latest_llm_pick_run_id() -> int | None:
     with SessionLocal() as session:
         run = session.execute(
             select(PickRun)
-            .where(PickRun.run_kind == "llm_top300", PickRun.llm_enabled.is_(True))
+            .where(PickRun.run_kind.in_(["llm_top300", "scan"]), PickRun.llm_enabled.is_(True))
             .order_by(desc(PickRun.id))
             .limit(1)
         ).scalar_one_or_none()

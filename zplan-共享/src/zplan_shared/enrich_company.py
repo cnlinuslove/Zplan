@@ -109,7 +109,7 @@ def fetch_company_profile(ts_code: str) -> dict[str, Any] | None:
         "registered_capital": ["注册资本", "注册资本(万元)"],
         "establish_date": ["成立日期"],
         "list_date": ["上市日期"],
-        "website": ["公司网址", "公司网站"],
+        "website": ["公司网址", "公司网站", "官方网站"],
         "email": ["电子邮箱", "邮箱"],
         "phone": ["联系电话", "电话"],
         "reg_address": ["注册地址"],

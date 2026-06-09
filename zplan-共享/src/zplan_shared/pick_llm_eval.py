@@ -153,9 +153,16 @@ def diagnose_entry(
             bars.index = idx
             on = bars[bars.index <= pd.Timestamp(as_of)]
             if not on.empty:
-                close = float(on["close"].iloc[-1])
-                if buy is None:
-                    buy = suggested_price_levels(on).get("suggested_buy")
+                bar_close = float(on["close"].iloc[-1])
+                # 若 buy 来自规则引擎（非 LLM 设定），随 close 一起重算以保证一致性
+                price_src = entry.price_source or "rule"
+                if price_src == "rule" or buy is None:
+                    levels = suggested_price_levels(on)
+                    close = bar_close
+                    buy = levels.get("suggested_buy", buy)
+                elif bar_close and buy:
+                    # LLM 设定的 buy_price：用 bar_close 做 gap 校验，但不覆盖 buy
+                    close = bar_close
     if close and buy:
         gap = round((close - buy) / buy * 100, 4)
         if gap > buy_gap_fail_pct:

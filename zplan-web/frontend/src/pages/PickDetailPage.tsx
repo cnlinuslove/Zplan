@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Card, Descriptions, Tag, Button, Space, Typography, Spin, List, Image } from 'antd'
+import ResearchButton from '../components/ResearchButton'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import api from '../api/client'
@@ -217,9 +218,12 @@ export default function PickDetailPage() {
           </List>
           {!e.markdown_report && (
             <div style={{ marginTop: 12 }}>
-              <Text type="secondary">
-                💡 该条目为规则扫描结果，暂无 LLM 深度研报。可在对话中发送「分析 {e.name}」触发完整分析。
-              </Text>
+              <Space>
+                <Text type="secondary">
+                  💡 该条目为规则扫描结果，暂无 LLM 深度研报。
+                </Text>
+                <ResearchButton tsCode={e.ts_code} />
+              </Space>
             </div>
           )}
         </Card>

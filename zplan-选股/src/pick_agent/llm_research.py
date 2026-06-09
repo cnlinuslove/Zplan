@@ -541,11 +541,12 @@ def _brief_review_one(
     )
     usage = pop_usage(raw)
     br = _apply_risk_penalty(p, raw if raw.get("ts_code") else raw)
+    adj = br.get("adjusted_score")
     out = {**p, "rule_composite_score": p.get("composite_score")}
-    # LLM 不再输出 composite_score，保存风险信息
-    out["llm_composite_score"] = None  # 向后兼容：nullable
-    out["composite_score"] = p.get("composite_score")  # 保留规则分
-    out["adjusted_score"] = br.get("adjusted_score")
+    # 风险调整后的分数就是新的 LLM 分数（替代旧版 composite_score）
+    out["llm_composite_score"] = adj
+    out["composite_score"] = adj  # 排序/最终分用调整后的值
+    out["adjusted_score"] = adj
     out["llm_brief"] = {
         "trend": br.get("trend_one_liner"),
         "recommendation": br.get("recommendation"),
@@ -599,11 +600,12 @@ vs_rule_engine 每项 **≤30字**。勿漏 ts_code。
     for p in picks:
         code = str(p.get("ts_code"))
         br = _apply_risk_penalty(p, by_code.get(code) or {})
+        adj = br.get("adjusted_score")
         out = {**p}
         out["rule_composite_score"] = p.get("composite_score")
-        out["llm_composite_score"] = None  # LLM 不再输出 composite_score
-        out["composite_score"] = p.get("composite_score")  # 保留规则分
-        out["adjusted_score"] = br.get("adjusted_score")
+        out["llm_composite_score"] = adj  # 风险调整后分数
+        out["composite_score"] = adj  # 排序/最终分用调整后的值
+        out["adjusted_score"] = adj
         out["llm_brief"] = {
             "trend": br.get("trend_one_liner"),
             "recommendation": br.get("recommendation"),

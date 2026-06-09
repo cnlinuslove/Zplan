@@ -108,11 +108,11 @@ async def get_pipeline_status():
         ).scalar()
 
         # 最新选股运行
-        latest_run = db.scalar(
+        latest_run = db.execute(
             select(PickRun.run_kind, PickRun.created_at_utc).order_by(
                 desc(PickRun.created_at_utc)
             ).limit(1)
-        )
+        ).first()
 
         return {
             "ok": True,

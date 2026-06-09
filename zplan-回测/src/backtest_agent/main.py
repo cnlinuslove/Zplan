@@ -11,6 +11,12 @@ from zplan_shared.market import get_bars, resolve_ts_code
 from zplan_shared.models import init_db
 from zplan_shared.pick_predictions import list_outcomes, validate_entries
 
+from backtest_agent.ab_backtest import (
+    _fridays_in_range,
+    _load_variant_file,
+    _parse_variants_arg,
+    run_ab_backtest,
+)
 from backtest_agent.calibration import build_calibration_report, print_calibration
 from backtest_agent.data_audit import audit_market_data, run_catchup_if_needed, score_deviation_report
 from backtest_agent.iterate import (
@@ -109,6 +115,24 @@ def main() -> None:
         help="写入 Markdown 报告（默认目录 ZPLAN_ROOT/backtest_review/）",
     )
 
+    ab = sub.add_parser("ab-backtest", help="A/B 历史回放：多变体 × 历史日期 → 统计对比")
+    ab.add_argument("--variants", type=str, default=None,
+                    help="逗号分隔变体名（无 overrides 模式），如 baseline,strict,value")
+    ab.add_argument("--variant-file", type=str, default=None,
+                    help="变体定义 YAML/JSON 文件路径")
+    ab.add_argument("--as-of", type=str, default=None,
+                    help="单日模式：指定交易日 YYYY-MM-DD")
+    ab.add_argument("--from", type=str, default=None, dest="from_date",
+                    help="区间模式起始日 YYYY-MM-DD")
+    ab.add_argument("--to", type=str, default=None, dest="to_date",
+                    help="区间模式结束日 YYYY-MM-DD")
+    ab.add_argument("--top", type=int, default=100,
+                    help="每变体选股数（默认 100）")
+    ab.add_argument("--horizon", type=int, default=5,
+                    help="验证期交易日（默认 5）")
+    ab.add_argument("--batch-size", type=int, default=10,
+                    help="LLM 批大小（默认 10）")
+
     chk = sub.add_parser("check-data", help="检查行情截面完整性")
     chk.add_argument("--json", action="store_true", dest="as_json")
 
@@ -185,6 +209,37 @@ def main() -> None:
             as_json=args.as_json,
             output=None if args.as_json else out,
         )
+    elif cmd == "ab-backtest":
+        if not args.variants and not args.variant_file:
+            print("请指定 --variants baseline,strict 或 --variant-file variants.yaml", file=sys.stderr)
+            raise SystemExit(2)
+
+        if args.variant_file:
+            variants = _load_variant_file(args.variant_file)
+        else:
+            variants = _parse_variants_arg(args.variants)
+
+        as_of = date.fromisoformat(args.as_of) if args.as_of else None
+        from_d = date.fromisoformat(args.from_date) if args.from_date else None
+        to_d = date.fromisoformat(args.to_date) if args.to_date else None
+
+        import sys
+        result = run_ab_backtest(
+            variants=variants,
+            as_of=as_of,
+            from_date=from_d,
+            to_date=to_d,
+            top_n=args.top,
+            horizon_days=args.horizon,
+            batch_size=args.batch_size,
+        )
+        if result.get("markdown"):
+            print(result["markdown"])
+        if result.get("report_path"):
+            print(f"\n---\n完整报告: {result['report_path']}")
+        if not result.get("ok"):
+            raise SystemExit(1)
+
     elif cmd == "check-data":
         result = audit_market_data()
         if args.as_json:

@@ -9,6 +9,7 @@ description = "Z-Plan 共享配置、数据库模型与 AkShare 股价 ETL"
 requires-python = ">=3.12"
 dependencies = [
     "akshare>=1.16.0",
+    "ddgs>=9.0",
     "matplotlib>=3.8",
     "mplfinance>=0.12.10a0",
     "pandas",

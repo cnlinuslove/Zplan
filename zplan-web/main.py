@@ -129,7 +129,16 @@ async def serve_spa(full_path: str):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     index = FRONTEND_DIST / "index.html"
     if index.exists():
-        return FileResponse(index)
+        # 读取 index.html 并给 JS/CSS 引用加时间戳防缓存
+        content = index.read_text()
+        import time as _time
+        content = content.replace('.js"', f'.js?v={int(_time.time())}"')
+        content = content.replace('.css"', f'.css?v={int(_time.time())}"')
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            content=content,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
     return JSONResponse({"detail": "Not Found"}, status_code=404)
 
 
