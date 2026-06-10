@@ -122,7 +122,7 @@ def build_rule_scores_universe(
     *,
     strategy: PickStrategy | None = None,
     skip_health_check: bool = False,
-    use_v2: bool = True,
+    use_v2: bool = False,
     as_of: date | None = None,
 ) -> dict[str, Any]:
     """向量化规则分写入 ``stock_rule_scores``（全预筛池，非仅 Top N）。

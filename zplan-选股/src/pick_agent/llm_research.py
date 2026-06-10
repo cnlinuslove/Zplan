@@ -36,24 +36,51 @@ except ImportError:
 _RESEARCH_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        # ── 4. 股价分析（核心）──
         "price_trend_analysis": {
             "type": "string",
-            "description": "近期股价走势深度分析：趋势、支撑阻力、量价、与板块对比；必须引用提供的数据日期与价格。",
+            "description": "近期股价走势深度分析：趋势方向、关键支撑/阻力位（引用具体价格）、量价配合、与板块联动分析；必须引用提供的数据日期与具体价格数值。需包含板块走势对比与资金面定性判断（游资/机构/量化）。",
         },
         "technical_analysis": {
             "type": "string",
-            "description": "KDJ/MACD/均线/RSI 等技术面对买入价值的判断。",
+            "description": "KDJ/MACD/RSI/均线/布林带等技术指标深度解读。必须引用具体指标数值（如 KDJ-K=xx），分析超买超卖状态、背离形态、均线排列，给出技术面综合判断。若近60日高位或RSI>80须明确警示追高风险。",
         },
         "technical_score": {"type": "number", "description": "技术面打分 0-100"},
-        "financial_analysis": {"type": "string"},
-        "financial_score": {"type": "number"},
-        "news_analysis": {"type": "string", "description": "资讯与舆情；无新闻则说明数据缺失"},
+        # ── 5. 财务分析（核心）──
+        "financial_analysis": {
+            "type": "string",
+            "description": "财务深度分析（≥300字）。必须包含：(1)近三年营收/利润/现金流趋势表（引用具体数字和增速），(2)杜邦分析拆解（净利率×周转率×杠杆），(3)现金流质量评估（经营现金流vs净利润），(4)资产负债结构风险（负债率、应收类占比、短期偿债压力），(5)如有行业对比数据须引用行业中位数做同业比较。数据不足时须标注「库内数据不完整」并给出推断边界。",
+        },
+        "financial_score": {"type": "number", "description": "财务面打分 0-100，需在分析中说明加减分逻辑"},
+        # ── 资讯与舆情 ──
+        "news_analysis": {"type": "string", "description": "近期资讯与舆情分析：事件类型分布、利好/利空定性、市场关注度。无新闻则说明数据缺失并标注影响。须引用具体事件类型和数量。"},
         "news_score": {"type": "number"},
-        "company_summary": {"type": "string", "description": "公司定位、核心业务（数据不足时明确说明）"},
-        "risks": {"type": "array", "items": {"type": "string"}},
-        "opportunities": {"type": "array", "items": {"type": "string"}},
-        "investment_summary": {"type": "string"},
-        "composite_score": {"type": "number", "description": "综合投资推荐分 0-100"},
+        # ── 公司深度 ──
+        "company_summary": {
+            "type": "string",
+            "description": "公司深度画像（≥200字）。必须包含：(1)公司定位与行业地位，(2)核心产品或服务矩阵（有数据时详述产品线、设计理念、商业模式），(3)核心竞争优势与护城河，(4)如有竞争对标数据须做同业比较。数据不足时明确标注并基于行业常识做「推断」标注。",
+        },
+        "competitive_landscape": {
+            "type": "string",
+            "description": "同业竞争格局分析。如提供了行业对比数据（排名、中位数PE/PB/ROE），须做横向对标，指出公司在行业中的生态位、相对优势和劣势。至少对比2-3家核心竞争对手的定位/盈利模式/困境。",
+        },
+        # ── 风险与机遇 ──
+        "risks": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "风险链式分析，每条按「触发条件 → 传导机制 → 潜在后果」展开，覆盖：技术面风险（超买/背离/高位）、基本面风险（利润率/负债/现金流）、行业风险（竞争/监管/技术替代）、宏观风险（政策/汇率/地缘）。每条≥40字。",
+        },
+        "opportunities": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "核心机遇与催化因素，每条需引用具体数据支撑（政策/行业趋势/公司动作/技术突破），≥30字。",
+        },
+        # ── 投资建议 ──
+        "investment_summary": {
+            "type": "string",
+            "description": "投资总结（≥150字）。必须包含：(1)核心投资逻辑一句话，(2)多方因素的利弊权衡，(3)与当前股价的关系（估值是否合理/是否有安全边际），(4)适合什么类型的投资者/策略。风格参考专业研报的「投资要点」章节。",
+        },
+        "composite_score": {"type": "number", "description": "综合投资推荐分 0-100（百分制）。需在 investment_summary 中给出加减分理由。评分标准：≥85强烈推荐，70-84关注，55-69观望，40-54谨慎，<40回避。追高风险时 composite 不得高于规则引擎综合分。"},
         "recommendation": {
             "type": "string",
             "enum": ["强烈关注", "关注", "观望", "谨慎", "回避"],
@@ -61,10 +88,11 @@ _RESEARCH_SCHEMA: dict[str, Any] = {
         "buy_price": {"type": "number"},
         "target_price": {"type": "number"},
         "stop_loss": {"type": "number"},
+        # ── 场景策略 ──
         "scenarios": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "3-4 条不同走势应对策略",
+            "description": "3 种极端走势的应对策略，每条必须包含触发条件（具体价位/指标）+ 操作纪律：(1)基准情景（大概率震荡/趋势延续），(2)乐观情景（突破后如何分批止盈），(3)悲观情景（破位/黑天鹅后如何止损/何时可重新关注）。",
         },
         "exit_plan": {
             "type": "object",
@@ -86,10 +114,16 @@ _RESEARCH_SCHEMA: dict[str, Any] = {
             },
             "required": ["recommended_plan", "reasoning"],
         },
+        # ── 数据缺口与引用 ──
         "data_gaps": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "当前数据不足以支撑的判断，需补充的数据源",
+            "description": "当前数据不足以支撑的判断，需补充的数据源。每条说明缺什么数据、影响哪个分析模块。",
+        },
+        "citation_notes": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "关键数据引用来源标注。格式：'[数据项]：来源（如 zplan.db daily_prices、company_profiles、financial_indicators、LLM推断）'",
         },
     },
     "required": [
@@ -100,6 +134,9 @@ _RESEARCH_SCHEMA: dict[str, Any] = {
         "financial_score",
         "news_analysis",
         "news_score",
+        "company_summary",
+        "risks",
+        "opportunities",
         "investment_summary",
         "composite_score",
         "recommendation",
@@ -179,25 +216,103 @@ def _build_prompt(base_report: dict[str, Any], bars_table: list[dict[str, Any]])
         },
     }
 
-    return f"""你是一名 A 股上市公司研究报告员，风格**偏题材催化、厌恶追高**。请**严格基于下方 JSON 数据**分析，不得编造未给出的财务数字、新闻标题、概念名或股价。
+    enrich_text = _enrich_block(meta["ts_code"])
 
-若某模块数据为空或标注「待扩展」，须在对应分析与 data_gaps 中说明，可结合行业常识做**定性**推断但须标注「推断，非库内事实」。
+    return f"""你是一名资深 A 股研究员，报告风格对标专业机构研报（深度 + 数据驱动 + 风险厌恶）。严格基于下方 JSON 数据进行分析，不得编造未给出的数字、新闻、概念或股价。
+
+核心原则：
+- 每个数据点必须可追溯（在 citation_notes 中标注来源）
+- 数据不足时标注「库内数据不完整」并给出推断边界（标注「推断」）
+- 避免空洞的看多/看空口号，所有结论必须有量化依据
+- 风险分析必须链式展开：触发条件 → 传导机制 → 潜在后果
 
 【量化与资讯上下文】
 {json.dumps(ctx, ensure_ascii=False, indent=2)}
 
-{_enrich_block(meta["ts_code"])}
-【任务】
-1. **题材**：有「概念题材」则 price_trend_analysis / investment_summary 须点明核心题材与催化逻辑；列表为空则写明「库内无概念标签」，不得编造。
-2. **股价走势**：结合近 30 日 K 线；若 ret_20d 偏高（指标快照）须写清追高风险，不得只写看多。
-3. **技术面**：解读 KDJ、MACD、RSI、均线，给出 technical_score（0-100）；超买或近 60 日高位须降分。
-4. **财务**：有数据则评营收/利润/估值；无数据则 financial_score 取 50 并说明。如有行业对比数据，须在 financial_analysis 中引用行业排名和中位数做同业比较。
-5. **资讯**：解读关联新闻与事件类型；无新闻则 news_score 取 50。
-6. **竞争力与产品**：如有【公司档案/行业对比/研报/机构持仓】数据，须在 company_summary 中分析公司核心产品与竞争壁垒，在 opportunities 中引用券商评级和盈利预测，在 risks 中标注机构持仓变化风险。
-7. **综合打分 composite_score**（0-100）与 recommendation（五选一）；追高风险时 composite 不得高于规则引擎综合分。
-8. buy_price 必须在 **[close×0.98, close×1.0]** 区间内。**必须直接采用**规则引擎给的「规则建议买卖价」中 suggested_buy（已综合 MA20 回踩/支撑位/ATR 定价，折价 0.5%~2%）。禁止自定买入价。MA20 附近的股票可给较深折扣（回踩买入），高位股折扣≤0.5%。禁止设定低于 close×0.98 的买入价（T+1 难成交）。target ≥ buy_price×1.05；stop 须与支撑位一致。
-9. scenarios：基准/回调/破位/突发利空等 3-4 条可执行策略。
-10. 输出合法 JSON，字段符合 schema；中文撰写。"""
+{enrich_text}
+
+══════════════════════════════════════════
+【报告撰写指南 — 按模块逐一执行】
+══════════════════════════════════════════
+
+【模块 4：股价分析 — 最重要模块】
+1. price_trend_analysis（≥200字）：
+   - 趋势：引用近30日K线的具体日期和价位（如「X月X日收盘X元，X月X日触及X元高位」），计算区间涨跌幅
+   - 支撑/阻力：结合MA20/MA60/布林带给出具体数字
+   - 量价配合：引用 vol_ratio20，判断放量/缩量与价格方向是否一致
+   - 板块联动：如提供了概念题材，分析所属板块近期走势
+   - 资金面：根据换手率/量比判断游资/机构/量化主导特征
+   - 若 ret_20d>7%，必须明确警示「追高追涨风险」，引用具体数值
+2. technical_analysis（≥150字）：
+   - 逐一解读 KDJ-K/D/J、MACD（DIF/DEA/柱状）、RSI、均线排列
+   - 必须引用指标快照中的具体数值（如「KDJ-K=85.3，处于超买区」）
+   - 判断超买超卖、金叉死叉、背离形态
+   - 若 high_60d_pct>90% 或 RSI>80 或 KDJ-K>80，须降分且明确警示
+3. technical_score：0-100，超买/近高位/背离须降分，均线多头+放量可加分
+
+【模块 5：财务分析 — 对标 CFA 级深度】
+4. financial_analysis（≥300字）：
+   - 三年趋势表：引用「财务记录」中的具体年份、营收、净利润、PE/PB/ROE 数字，计算同比增速
+   - 杜邦分析：用给出的数据拆解 净利率（净利润/营收）、资产周转率、权益乘数
+   - 现金流：如有经营现金流数据，与净利润对比（现金流/净利润比值），判断盈利质量
+   - 资产负债：引用负债率、应收类占比，分析财务杠杆风险
+   - 同业比较：如有【行业对比】数据，必须引用行业中位数 PE/PB/ROE 做横向对比
+   - 有「估值截面」数据时须引用 PE/PB/总市值/流通市值
+   - 综合评估：增长性+盈利质量+杠杆水平+估值合理性
+5. financial_score：0-100，在分析末尾明确列出加减分项和逻辑（加分项+扣分项）
+
+【模块：资讯与舆情】
+6. news_analysis（≥80字）：引用「关联新闻摘要」中的事件类型和数量，定性利好/利空/中性，说明市场关注度。无新闻则写「库内暂无近期关联新闻」并 news_score 取 50。
+
+【模块：公司深度与竞争格局】
+7. company_summary（≥200字）：
+   - 公司定位：引用行业+概念题材，一句话概括公司的市场角色
+   - 核心产品/业务矩阵：如有【公司档案】数据须详述主营业务、产品线、商业模式
+   - 竞争优势：分析护城河（规模/技术/牌照/品牌/渠道）
+   - 如有【深度数据】中的产品深度分析（competitive_positioning/technology_moat/key_products_json），必须整合进此段
+   - 数据不足时标注缺失项
+8. competitive_landscape（≥150字）：
+   - 如有【行业对比】数据，引用营收/利润/市值排名、行业中位数 PE/PB/ROE
+   - 至少对比 2-3 家核心竞争对手的定位、盈利模式与困境
+   - 指出公司的行业生态位——是「垄断定价者」「规模流量运营者」「技术赋能平台」还是「传统服务商」
+   - 无竞争对手数据时，基于行业常识做推断并标注「推断」
+
+【模块 7：风险分析 — 链式展开】
+9. risks（4-6条，每条≥40字）：
+   - 每条按「触发条件 → 传导机制 → 潜在后果」三段式展开
+   - 必须覆盖：(a)技术面风险（超买/背离/高位/量价背离），(b)基本面风险（利润率低/负债高/现金流差），(c)行业风险（竞争加剧/技术替代/监管变化），(d)宏观风险（政策/汇率/地缘）
+   - 如有【机构持仓】数据中北向/基金减持信号，须标注
+   - 引用具体数字（如「毛利率仅X%」「负债率X%」「出海业务占比X%」）
+
+【模块 8：核心竞争力与机遇】
+10. opportunities（4-6条，每条≥30字）：
+    - 引用具体数据：政策利好/行业趋势/公司动作（新产品/AI赋能/出海拓展）
+    - 如有【机构研报】中的评级和EPS预测，须引用（如「X家券商给予买入评级，2026E EPS=X元」）
+    - 注明每条机遇的确定性（高/中/低）
+
+【投资建议 — 最关键决策模块】
+11. investment_summary（≥150字）：
+    - 一句话核心投资逻辑（如「AI赋能+出海双引擎，但当前估值已透支2年预期」）
+    - 多方 vs 空方的利弊权衡（至少各 2 条）
+    - 与当前股价的关系：引用现价，判断估值泡沫/合理/低估，计算安全边际
+    - 适合什么类型的投资者/持仓周期
+    - composite_score 的加减分理由
+12. composite_score：严格按百分制。≥85=强烈推荐，70-84=关注，55-69=观望，40-54=谨慎，<40=回避。追高/高位/基本面羸弱须扣分。若规则引擎综合分已较低且存在严重风险，composite 不得高于规则引擎分。
+13. buy_price：必须在 **[close×0.98, close×1.0]** 区间内。直接采用规则引擎给的 suggested_buy（已综合 MA20 回踩/支撑位/ATR 定价）。禁止自定买入价。MA20 附近可给较深折扣（回踩买入），高位股折扣≤0.5%。
+14. target_price ≥ buy_price×1.05；stop_loss 须与支撑位一致。
+
+【场景策略 — 三种极端走势的机械操作纪律】
+15. scenarios（3条，每条含触发条件+操作）：
+    - 基准情景（大概率）：震荡/趋势延续 → 如何持有/加仓/减仓
+    - 乐观情景（突破）：冲破阻力位后 → 分批止盈策略（每涨X%卖Y%）
+    - 悲观情景（破位/黑天鹅）：跌破关键支撑/利空事件 → 止损触发点+何时可重新关注
+
+16. citation_notes（≥3条）：标注关键数据来源。格式示例：「股价K线数据：zplan.db daily_prices」「财务指标：financial_indicators 表」「行业对比：industry_peers 表」「概念标签：concept_tags」「公司档案：company_profiles 表（enrich_company）」「机构研报：research_reports 表」
+
+17. data_gaps：列出当前数据不足以支撑的判断及缺失的数据源。
+
+══════════════════════════════════════════
+输出合法 JSON，所有文本字段中文撰写，引用数据时注明具体数字。"""
 
 
 def research_with_llm(
@@ -261,6 +376,10 @@ def research_with_llm(
         },
         "modules": {
             **base["modules"],
+            "2_核心产品": {
+                **base["modules"]["2_核心产品"],
+                "LLM产品分析": llm.get("company_summary"),
+            },
             "4_股价分析": {
                 **base["modules"]["4_股价分析"],
                 "LLM走势深度分析": llm.get("price_trend_analysis"),
@@ -280,8 +399,10 @@ def research_with_llm(
                 **base["modules"]["8_核心竞争力"],
                 "机遇要点": llm.get("opportunities", []),
                 "公司摘要": llm.get("company_summary"),
+                "竞争格局": llm.get("competitive_landscape"),
             },
         },
+        "引用来源": llm.get("citation_notes") or [],
         "data_gaps_for_other_agents": list(
             dict.fromkeys(
                 (base.get("data_gaps_for_other_agents") or [])
@@ -293,72 +414,289 @@ def research_with_llm(
 
 
 def format_llm_report_markdown(report: dict[str, Any]) -> str:
-    """LLM 增强版 Markdown 研报。"""
+    """LLM 增强版 Markdown 研报（对标机构研报 8 模块结构）。"""
     meta = report["meta"]
     title = meta.get("name") or meta["ts_code"]
     llm = report.get("llm") or {}
     advice = report["投资建议"]
+    modules = report["modules"]
 
     lines = [
-        f"# {title}（{meta['ts_code']}）投资研究报告（LLM）",
+        f"# {title}（{meta['ts_code']}）深度研究报告",
         "",
         f"> 数据截止：{report.get('as_of', '—')} | "
         f"**LLM 综合推荐分：{advice.get('LLM综合分', advice.get('综合推荐分'))}** | "
-        f"规则引擎：{advice.get('规则引擎综合分', '—')}",
+        f"规则引擎：{advice.get('规则引擎综合分', '—')} | "
+        f"操作建议：**{advice.get('操作建议', '—')}**",
         "",
-        "## 投资建议",
-        advice.get("总结") or advice.get("investment_summary", ""),
+        "---",
         "",
-        f"- **操作建议**：{advice.get('操作建议')}",
-        f"- **建议买入价**：{advice.get('建议买入价')}",
-        f"- **目标价**：{advice.get('目标价')}",
-        f"- **止损参考**：{advice.get('止损参考')}",
-        "",
-        "## 4. 股价走势分析（LLM）",
-        llm.get("price_trend_analysis") or advice.get("LLM股价分析") or "—",
-        "",
-        "## 技术面分析（LLM）",
-        llm.get("technical_analysis") or advice.get("LLM技术面分析") or "—",
-        "",
-        f"**LLM 技术得分**：{llm.get('technical_score', '—')} | "
-        f"**规则引擎技术得分**：{report['modules']['4_股价分析'].get('技术得分', '—')}",
-        "",
-        "## 5. 财务分析（LLM）",
-        llm.get("financial_analysis") or "—",
-        "",
-        "## 资讯与舆情（LLM）",
-        llm.get("news_analysis") or "—",
-        "",
-        "## 7. 风险",
     ]
-    for r in llm.get("risks") or []:
-        lines.append(f"- {r}")
 
-    lines.extend(["", "## 8. 机遇与竞争力"])
-    if llm.get("company_summary"):
-        lines.append(llm["company_summary"])
+    # ═══ 1. 公司基本信息 ═══
+    m1 = modules.get("1_基本信息", {})
+    lines.extend([
+        "## 1. 公司基本信息",
+        "",
+        f"- **行业**：{m1.get('行业', '—')}",
+        f"- **上市日期**：{m1.get('上市日期', '—')}",
+        f"- **官网**：{m1.get('官网', '—')}",
+        f"- **数据来源**：{m1.get('数据来源', '—')}",
+        "",
+    ])
+
+    # ═══ 2. 核心产品 ═══
+    m2 = modules.get("2_核心产品", {})
+    llm_product = m2.get("LLM产品分析", "")
+    core_products = m2.get("核心产品", "")
+    lines.append("## 2. 核心产品")
+    lines.append("")
+    if llm_product:
+        lines.append(llm_product)
         lines.append("")
-    for o in llm.get("opportunities") or []:
-        lines.append(f"- {o}")
+    elif core_products and core_products != "待扩展":
+        lines.append(f"- 核心产品：{core_products}")
+        lines.append("")
+    else:
+        lines.append("> ⚠️ 产品数据待充实（需 enrich_company P2 深度调研）")
+        lines.append("")
+    if m2.get("news_mentions_48h"):
+        lines.append(f"- 48h 新闻提及：{m2['news_mentions_48h']} 条")
+        lines.append("")
 
-    lines.extend(["", "### 不同走势应对"])
-    for s in advice.get("走势应对") or []:
-        lines.append(f"- {s}")
+    # ═══ 3. 创始团队 ═══
+    m3 = modules.get("3_创始团队", {})
+    team_data = m3.get("团队", "")
+    lines.append("## 3. 创始团队与核心管理层")
+    lines.append("")
+    if team_data and team_data != "待扩展":
+        lines.append(f"- {team_data}")
+    else:
+        lines.append("> ⚠️ 管理层数据待充实（需 enrich_company P0 公司档案扩展）")
+    lines.append("")
 
-    # 附录：规则引擎指标
-    snap = report["modules"]["4_股价分析"].get("指标快照")
+    # ═══ 4. 股价分析 ═══
+    m4 = modules.get("4_股价分析", {})
+    lines.extend([
+        "## 4. 股价分析（核心）",
+        "",
+    ])
+    # LLM 走势深度分析
+    price_analysis = llm.get("price_trend_analysis") or advice.get("LLM股价分析") or m4.get("LLM走势深度分析", "")
+    if price_analysis:
+        lines.append("### 4.1 走势深度分析")
+        lines.append("")
+        lines.append(price_analysis)
+        lines.append("")
+    # 规则引擎趋势
+    trend = m4.get("趋势叙述", "")
+    if trend and "近 60" in str(trend):
+        lines.append(f"> 规则引擎趋势：{trend}")
+        lines.append("")
+    # 技术面分析
+    tech_analysis = llm.get("technical_analysis") or advice.get("LLM技术面分析") or m4.get("LLM技术面分析", "")
+    lines.append("### 4.2 技术指标分析")
+    lines.append("")
+    lines.append(f"**技术面结论**：{m4.get('技术面结论', '—')}")
+    lines.append("")
+    if tech_analysis:
+        lines.append(tech_analysis)
+        lines.append("")
+    # 得分
+    lines.append(f"| 评分维度 | 得分 |")
+    lines.append(f"|----------|------|")
+    lines.append(f"| LLM 技术得分 | {llm.get('technical_score', '—')} |")
+    lines.append(f"| 规则引擎技术得分 | {m4.get('技术得分', '—')} |")
+    lines.append("")
+
+    # 关键信号
+    signals = m4.get("关键信号") or []
+    if signals:
+        lines.append("**关键信号**：")
+        for sig in signals:
+            lines.append(f"- {sig}")
+        lines.append("")
+
+    # 筹码分布
+    chip = m4.get("筹码分布") or {}
+    if chip.get("available"):
+        lines.extend([
+            "**筹码分布**：",
+            f"- 获利比例：{chip['profit_ratio']:.1f}%　|　平均成本：{chip['avg_cost']:.2f}",
+            f"- 90%筹码区间：[{chip['cost_90_low']:.2f}, {chip['cost_90_high']:.2f}]",
+            f"- 90%集中度：{chip['concentration_90']:.4f}　|　70%集中度：{chip['concentration_70']:.4f}",
+            f"- 数据截止：{chip.get('as_of', '—')}",
+            "",
+        ])
+
+    # ═══ 5. 财务情况 ═══
+    m5 = modules.get("5_财务情况", {})
+    lines.extend([
+        "## 5. 财务情况（核心）",
+        "",
+    ])
+    fin_analysis = llm.get("financial_analysis") or advice.get("LLM财务分析") or m5.get("LLM分析", "")
+    if fin_analysis:
+        lines.append(fin_analysis)
+        lines.append("")
+    # 规则引擎财务
+    lines.append(f"**规则引擎财务评语**：{m5.get('评语', '—')}")
+    lines.append(f"**规则引擎财务得分**：{m5.get('财务得分', '—')}")
+    if llm.get("financial_score") is not None:
+        lines.append(f"**LLM 财务得分**：{llm.get('financial_score', '—')}")
+    lines.append("")
+
+    # 估值截面
+    snap = m5.get("估值截面")
+    if snap and isinstance(snap, dict):
+        lines.append("**估值截面**：")
+        pe = snap.get("pe_ttm")
+        pb = snap.get("pb")
+        mv = snap.get("total_mv")
+        if pe:
+            lines.append(f"- PE(TTM)：{pe:.2f}")
+        if pb:
+            lines.append(f"- PB：{pb:.2f}")
+        if mv:
+            lines.append(f"- 总市值：{mv/1e8:.1f} 亿")
+        lines.append("")
+
+    # ═══ 6. 投资持仓 ═══
+    m6 = modules.get("6_投资持仓", {})
+    lines.append("## 6. 获得投资情况")
+    lines.append("")
+    if m6 and m6.get("状态") and "待" not in str(m6.get("状态")):
+        lines.append(f"- {m6.get('状态', '—')}")
+    else:
+        lines.append("> ⚠️ 机构持仓数据待充实（需 enrich_company P1 股东+北向+基金 ETL）")
+    lines.append("")
+
+    # ═══ 7. 公司风险 ═══
+    m7 = modules.get("7_公司风险", {})
+    lines.extend([
+        "## 7. 公司风险（核心）",
+        "",
+    ])
+    # LLM 风险要点
+    llm_risks = llm.get("risks") or m7.get("风险要点") or []
+    if llm_risks:
+        for i, r in enumerate(llm_risks, 1):
+            lines.append(f"{i}. {r}")
+            lines.append("")
+    else:
+        lines.append("> 暂无风险标注")
+        lines.append("")
+    # 技术风险
+    lines.append(f"**技术面风险信号**：{m7.get('技术风险', '—')}")
+    lines.append(f"**48h 新闻条数**：{m7.get('新闻条数_48h', 0)}")
+    lines.append("")
+
+    # ═══ 8. 核心竞争力 ═══
+    m8 = modules.get("8_核心竞争力", {})
+    lines.extend([
+        "## 8. 核心竞争力与行业对标",
+        "",
+    ])
+    # 公司摘要
+    company_summary = llm.get("company_summary") or m8.get("公司摘要", "")
+    if company_summary:
+        lines.append("### 8.1 公司定位与护城河")
+        lines.append("")
+        lines.append(company_summary)
+        lines.append("")
+
+    # 竞争格局
+    competitive = llm.get("competitive_landscape") or m8.get("竞争格局", "")
+    if competitive:
+        lines.append("### 8.2 同业竞争格局")
+        lines.append("")
+        lines.append(competitive)
+        lines.append("")
+
+    # 机遇
+    opportunities = llm.get("opportunities") or m8.get("机遇要点") or []
+    if opportunities:
+        lines.append("### 8.3 核心机遇与催化")
+        lines.append("")
+        for o in opportunities:
+            lines.append(f"- {o}")
+        lines.append("")
+
+    # ═══ 9. 投资建议 ═══
+    lines.extend([
+        "---",
+        "",
+        "## 9. 投资建议",
+        "",
+    ])
+    # 总结
+    inv_summary = advice.get("总结") or advice.get("investment_summary", "")
+    if inv_summary:
+        lines.append(inv_summary)
+        lines.append("")
+
+    lines.extend([
+        "### 价格与操作建议",
+        "",
+        f"| 项目 | 价格 |",
+        f"|------|------|",
+        f"| 操作建议 | **{advice.get('操作建议', '—')}** |",
+        f"| 建议买入价 | {advice.get('建议买入价', '—')} |",
+        f"| 目标价 | {advice.get('目标价', '—')} |",
+        f"| 止损参考 | {advice.get('止损参考', '—')} |",
+        f"| 综合推荐分 | {advice.get('综合推荐分', '—')} / 100 |",
+        "",
+    ])
+
+    # 走势应对
+    scenarios = advice.get("走势应对") or []
+    if scenarios:
+        lines.append("### 不同走势应对策略")
+        lines.append("")
+        for i, s in enumerate(scenarios, 1):
+            lines.append(f"{i}. {s}")
+            lines.append("")
+    else:
+        lines.append("> 暂无场景策略")
+        lines.append("")
+
+    # ═══ 附录 ═══
+    # 指标快照
+    snap = m4.get("指标快照")
     if snap:
-        lines.extend(["", "## 附录：量化指标快照", "```"])
+        lines.extend([
+            "---",
+            "",
+            "## 附录 A：量化指标快照",
+            "",
+            "```",
+        ])
         for k, v in snap.items():
             if v is not None:
                 lines.append(f"{k}: {v}")
-        lines.append("```")
+        lines.extend(["```", ""])
 
+    # 引用来源
+    citations = report.get("引用来源") or llm.get("citation_notes") or []
+    if citations:
+        lines.extend([
+            "## 附录 B：数据引用来源",
+            "",
+        ])
+        for c in citations:
+            lines.append(f"- {c}")
+        lines.append("")
+
+    # 数据缺口
     gaps = report.get("data_gaps_for_other_agents") or llm.get("data_gaps") or []
     if gaps:
-        lines.extend(["", "## 数据缺口"])
+        lines.extend([
+            "## 附录 C：数据缺口",
+            "",
+        ])
         for g in gaps:
             lines.append(f"- {g}")
+        lines.append("")
 
     return "\n".join(lines)
 

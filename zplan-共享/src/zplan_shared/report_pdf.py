@@ -317,6 +317,165 @@ class ReportPDF(FPDF):
         self.ln(2)
         self._p("提示: 发送「选股 代码」到 Z-Plan 可查看匹配股详细分析", size=7, color=CLR_MUTED)
 
+    def page_financial(self, report: dict[str, Any]) -> None:
+        """财务数据表（三年趋势 + 评分）。"""
+        m5 = report.get("modules", {}).get("5_财务情况", {})
+        fin_rows = m5.get("近三年记录") or []
+        fin_score = m5.get("财务得分")
+        fin_note = m5.get("评语", "")
+        fin_llm = m5.get("LLM分析", "") or m5.get("LLM财务得分", "")
+        llm_fin_score = m5.get("LLM财务得分")
+
+        if not fin_rows and not fin_note:
+            return
+
+        self._need(30)
+        self._hdr("财务数据分析")
+
+        # 评分汇总行
+        self._use("", 9)
+        score_line = f"规则引擎财务得分: {fin_score}" if fin_score is not None else ""
+        if llm_fin_score is not None:
+            score_line += f"  |  LLM 财务得分: {llm_fin_score}"
+        if score_line:
+            self.set_text_color(*CLR_BLUE)
+            self.cell(0, 6, score_line, new_x="LMARGIN", new_y="NEXT")
+            self.ln(3)
+
+        # 规则评语
+        if fin_note:
+            self._p(f"评语: {fin_note}", size=8, color=CLR_MUTED)
+            self.ln(2)
+
+        # 财务数据表
+        if fin_rows:
+            self._need(len(fin_rows) * 7 + 25)
+            headers = ["报告期", "PE", "PB", "营收(亿)", "净利(亿)", "ROE%"]
+            cols = [36, 24, 24, 34, 34, 28]
+            self._use("B", 7)
+            self.set_fill_color(*CLR_DARK)
+            self.set_text_color(*CLR_WHITE)
+            for h, w in zip(headers, cols):
+                self.cell(w, 6, h, fill=True, align="C")
+            self.ln()
+
+            for i, r in enumerate(fin_rows[:8]):
+                if i % 2 == 0:
+                    self.set_fill_color(*CLR_BG_LIGHT)
+                else:
+                    self.set_fill_color(*CLR_WHITE)
+                self._use("", 7)
+                self.set_text_color(*CLR_TEXT)
+                rd = str(r.get("report_date", "-"))[:10]
+                pe = f'{r["pe_ttm"]:.1f}' if r.get("pe_ttm") else "-"
+                pb = f'{r["pb"]:.2f}' if r.get("pb") else "-"
+                rev = f'{r["revenue"]/1e8:.1f}' if r.get("revenue") else "-"
+                np_ = f'{r["net_profit"]/1e8:.2f}' if r.get("net_profit") else "-"
+                roe = f'{r["roe"]:.1f}' if r.get("roe") else "-"
+                row_vals = [rd, pe, pb, rev, np_, roe]
+                for v, w in zip(row_vals, cols):
+                    self.cell(w, 5.5, v, fill=True, align="C")
+                self.ln()
+            self.ln(3)
+
+        # LLM 财务分析文字
+        if fin_llm and str(fin_llm).strip():
+            self._use("B", 9)
+            self.set_text_color(*CLR_DARK)
+            self.cell(0, 5, "LLM 财务深度分析", new_x="LMARGIN", new_y="NEXT")
+            self._p(str(fin_llm)[:800], size=8)
+
+    def page_company_overview(self, report: dict[str, Any]) -> None:
+        """公司画像页（产品 + 管理层 + 竞争格局）。"""
+        modules = report.get("modules", {})
+        m2 = modules.get("2_核心产品", {})
+        m3 = modules.get("3_创始团队", {})
+        m8 = modules.get("8_核心竞争力", {})
+
+        # 检查是否有实质内容
+        has_products = m2.get("核心产品") and m2["核心产品"] != "待扩展"
+        has_product_deep = bool(m2.get("产品深度"))
+        has_team = m3.get("团队") and m3["团队"] != "待扩展"
+        has_peers = bool(m8.get("行业对标"))
+        has_competitive = bool(m8.get("竞争格局") or m8.get("公司摘要"))
+
+        if not (has_products or has_team or has_peers or has_competitive):
+            return
+
+        self._need(20)
+        self._hdr("公司深度画像")
+
+        # 核心产品
+        if has_products or has_product_deep:
+            self._use("B", 10)
+            self.set_text_color(*CLR_DARK)
+            self.cell(0, 6, "核心产品", new_x="LMARGIN", new_y="NEXT")
+            if has_products:
+                self._p(str(m2["核心产品"])[:600], size=8)
+            if has_product_deep:
+                self._p(str(m2["产品深度"])[:400], size=8)
+            self.ln(2)
+
+        # 管理层
+        if has_team:
+            self._use("B", 10)
+            self.set_text_color(*CLR_DARK)
+            self.cell(0, 6, "创始团队与核心管理层", new_x="LMARGIN", new_y="NEXT")
+            self._p(str(m3["团队"])[:400], size=8)
+            self.ln(2)
+
+        # 行业对标
+        if has_peers:
+            self._use("B", 10)
+            self.set_text_color(*CLR_DARK)
+            self.cell(0, 6, "行业对标", new_x="LMARGIN", new_y="NEXT")
+            self._p(str(m8["行业对标"])[:500], size=8)
+            self.ln(2)
+
+        # 竞争格局（LLM）
+        competitive = m8.get("竞争格局", "")
+        if competitive:
+            self._use("B", 10)
+            self.set_text_color(*CLR_DARK)
+            self.cell(0, 6, "竞争格局分析", new_x="LMARGIN", new_y="NEXT")
+            self._p(str(competitive)[:600], size=8)
+            self.ln(2)
+
+        # 机遇
+        opps = m8.get("机遇要点") or []
+        if opps:
+            self._use("B", 9)
+            self.set_text_color(*CLR_GREEN)
+            self.cell(0, 5, "核心机遇", new_x="LMARGIN", new_y="NEXT")
+            for o in (opps if isinstance(opps, list) else [opps])[:4]:
+                self._p(f"• {o}", size=8, color=CLR_GREEN)
+
+    def page_citations(self, report: dict[str, Any]) -> None:
+        """引用来源页。"""
+        citations = report.get("引用来源") or []
+        gaps = report.get("data_gaps_for_other_agents") or []
+
+        if not citations and not gaps:
+            return
+
+        self._need(15)
+        self._hdr("数据来源与引用")
+
+        if citations:
+            self._use("B", 9)
+            self.set_text_color(*CLR_DARK)
+            self.cell(0, 5, "引用来源", new_x="LMARGIN", new_y="NEXT")
+            for c in (citations if isinstance(citations, list) else [citations]):
+                self._p(f"• {c}", size=7, color=CLR_MUTED)
+            self.ln(3)
+
+        if gaps:
+            self._use("B", 9)
+            self.set_text_color(*CLR_RED)
+            self.cell(0, 5, "数据缺口（待补充）", new_x="LMARGIN", new_y="NEXT")
+            for g in (gaps if isinstance(gaps, list) else [gaps]):
+                self._p(f"• {g}", size=7, color=CLR_MUTED)
+
     def page_recommendation(self, report: dict[str, Any], verdict: str) -> None:
         advice = report.get("投资建议") or {}
         rec = advice.get("操作建议", "观望")
@@ -405,12 +564,15 @@ def generate_pdf_report(
         pdf.page_prices(price_levels)
 
     # 后续内容自动分页
+    pdf.page_financial(report)           # 财务数据表 + 三年趋势
+    pdf.page_company_overview(report)    # 公司画像（产品+管理层+行业对标）
     pdf.page_llm(report, llm_brief)
     pdf.page_risks(report, risk_flags)
     # MACD + 相似形态画廊图（优先图表，辅助文字详情在后）
     pdf.page_macd_chart(chart_macd_path or "")
     pdf.page_similar(similar_patterns)
     pdf.page_recommendation(report, verdict)
+    pdf.page_citations(report)           # 引用来源 + 数据缺口
 
     # 每页页脚
     # fpdf2 的 footer() 对每页自动调用，此处用最后一页也显示的方案

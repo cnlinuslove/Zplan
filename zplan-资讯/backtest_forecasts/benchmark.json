@@ -1,42 +1,47 @@
 {
-  "evaluated_at": "2026-06-10T16:21:51.560122+00:00",
-  "sample_count": 30,
+  "evaluated_at": "2026-06-10T16:50:04.792977+00:00",
+  "sample_count": 29,
   "horizons": {
     "1": {
-      "total": 29,
-      "correct": 9,
-      "accuracy_pct": 31.0,
-      "avg_actual_return": 0.01
+      "total": 28,
+      "correct": 11,
+      "accuracy_pct": 39.3,
+      "avg_actual_return": -0.02
     },
     "3": {
-      "total": 29,
+      "total": 28,
       "correct": 12,
-      "accuracy_pct": 41.4,
-      "avg_actual_return": 0.21
+      "accuracy_pct": 42.9,
+      "avg_actual_return": 0.16
     },
     "5": {
-      "total": 28,
-      "correct": 13,
-      "accuracy_pct": 46.4,
-      "avg_actual_return": 0.14
+      "total": 27,
+      "correct": 12,
+      "accuracy_pct": 44.4,
+      "avg_actual_return": 0.05
     },
     "20": {
-      "total": 24,
-      "correct": 10,
-      "accuracy_pct": 41.7,
-      "avg_actual_return": -0.21
+      "total": 23,
+      "correct": 11,
+      "accuracy_pct": 47.8,
+      "avg_actual_return": 0.06
     }
   },
   "by_direction": {
     "bullish": {
-      "count": 19,
-      "correct": 7,
-      "accuracy_pct": 36.8
+      "count": 18,
+      "correct": 6,
+      "accuracy_pct": 33.3
     },
     "range-bound": {
-      "count": 10,
+      "count": 6,
       "correct": 2,
-      "accuracy_pct": 20.0
+      "accuracy_pct": 33.3
+    },
+    "bearish": {
+      "count": 4,
+      "correct": 3,
+      "accuracy_pct": 75.0
     },
     "?": {
       "count": 1,

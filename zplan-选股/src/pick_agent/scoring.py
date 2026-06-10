@@ -12,22 +12,147 @@ from pick_agent.technical import TechnicalSnapshot, analyze_technical
 
 
 def financial_score_from_rows(rows: list[dict[str, Any]]) -> tuple[float | None, str]:
+    """财务多维评分（对标机构研报财务分析深度）。
+
+    评分维度（总分 100，base=50）：
+    - 盈利能力（30分）：净利润正负、净利率趋势、ROE水平
+    - 成长性（20分）：营收增速、利润增速
+    - 估值合理性（±15分）：PE/PB相对合理区间
+    - 数据完整性（±10分）：至少3期数据可得性
+    """
     if not rows:
-        return None, "财报缺失"
+        return None, "财报缺失（需 Phase D：股价 Agent 季报 ETL）"
+
     latest = rows[0]
     score = 50.0
     notes: list[str] = []
-    np_ = latest.get("net_profit")
-    if np_ is not None:
-        score += 15 if np_ > 0 else -15
-        notes.append("净利润为正" if np_ > 0 else "净利润为负")
-    if len(rows) >= 2 and rows[0].get("revenue") and rows[1].get("revenue"):
-        if rows[0]["revenue"] > rows[1]["revenue"]:
-            score += 10
-            notes.append("营收改善")
+    plus_items: list[str] = []
+    minus_items: list[str] = []
+
+    # ── 1. 盈利能力（30 分）──
+    np_latest = latest.get("net_profit")
+    rev_latest = latest.get("revenue")
+
+    if np_latest is not None:
+        if np_latest > 0:
+            score += 15
+            plus_items.append(f"净利润 {np_latest/1e8:.2f} 亿（盈利）")
+            # 净利率
+            if rev_latest and rev_latest > 0:
+                margin = np_latest / rev_latest * 100
+                if margin > 15:
+                    score += 10
+                    plus_items.append(f"净利率 {margin:.1f}%（极强）")
+                elif margin > 5:
+                    score += 5
+                    plus_items.append(f"净利率 {margin:.1f}%（良好）")
+                elif margin < 2:
+                    score -= 5
+                    minus_items.append(f"净利率仅 {margin:.2f}%（极薄）")
+                else:
+                    notes.append(f"净利率 {margin:.1f}%")
         else:
+            score -= 15
+            minus_items.append(f"净利润 {np_latest/1e8:.2f} 亿（亏损）")
+
+    # ROE
+    roe_latest = latest.get("roe")
+    if roe_latest is not None:
+        if roe_latest > 15:
+            score += 5
+            plus_items.append(f"ROE {roe_latest:.1f}%（优秀）")
+        elif roe_latest > 5:
+            score += 2
+            plus_items.append(f"ROE {roe_latest:.1f}%（尚可）")
+        elif roe_latest < 0:
             score -= 5
-    return max(0.0, min(100.0, score)), "；".join(notes) if notes else "财报粗评"
+            minus_items.append(f"ROE {roe_latest:.1f}%（负值）")
+
+    # ── 2. 成长性（20 分）──
+    if len(rows) >= 2:
+        rev_prev = rows[1].get("revenue")
+        np_prev = rows[1].get("net_profit")
+
+        # 营收增速
+        if rev_latest and rev_prev and rev_prev > 0:
+            rev_growth = (rev_latest / rev_prev - 1) * 100
+            if rev_growth > 20:
+                score += 10
+                plus_items.append(f"营收增速 {rev_growth:.1f}%（高增）")
+            elif rev_growth > 5:
+                score += 5
+                plus_items.append(f"营收增速 {rev_growth:.1f}%（稳健）")
+            elif rev_growth < -10:
+                score -= 5
+                minus_items.append(f"营收增速 {rev_growth:.1f}%（下滑）")
+            else:
+                notes.append(f"营收增速 {rev_growth:.1f}%")
+
+        # 利润增速
+        if np_latest and np_prev and np_prev != 0:
+            np_growth = (np_latest / np_prev - 1) * 100 if np_prev > 0 else None
+            if np_growth is not None:
+                if np_growth > 100:
+                    score += 10
+                    plus_items.append(f"利润增速 {np_growth:.0f}%（爆发）")
+                elif np_growth > 20:
+                    score += 5
+                    plus_items.append(f"利润增速 {np_growth:.0f}%（增长）")
+                elif np_growth < -30:
+                    score -= 8
+                    minus_items.append(f"利润增速 {np_growth:.0f}%（恶化）")
+        # 扭亏为盈特别加分
+        if np_latest and np_latest > 0 and np_prev and np_prev < 0:
+            score += 10
+            plus_items.append("扭亏为盈（重大改善）")
+
+    # ── 3. 估值合理性（±15 分）──
+    pe = latest.get("pe_ttm")
+    pb = latest.get("pb")
+    if pe is not None and pe > 0:
+        if pe > 100:
+            score -= 8
+            minus_items.append(f"PE {pe:.0f}x（极高估值）")
+        elif pe > 50:
+            score -= 3
+            minus_items.append(f"PE {pe:.0f}x（偏高）")
+        elif pe < 15:
+            score += 8
+            plus_items.append(f"PE {pe:.0f}x（低估值）")
+        elif pe < 25:
+            score += 3
+            plus_items.append(f"PE {pe:.0f}x（合理）")
+    if pb is not None and pb > 0:
+        if pb > 10:
+            score -= 5
+            minus_items.append(f"PB {pb:.1f}x（极高）")
+        elif pb < 1:
+            score += 5
+            plus_items.append(f"PB {pb:.2f}x（破净）")
+
+    # ── 4. 多期趋势稳定性（±10 分）──
+    if len(rows) >= 3:
+        # 连续营收增长
+        revs = [r.get("revenue") for r in rows[:3] if r.get("revenue")]
+        if len(revs) >= 3 and all(revs[i] > revs[i+1] for i in range(len(revs)-1)):
+            score += 5
+            plus_items.append("连续3期营收增长")
+        # 连续亏损
+        nps = [r.get("net_profit") for r in rows[:3] if r.get("net_profit") is not None]
+        if len(nps) >= 3 and all(np <= 0 for np in nps):
+            score -= 5
+            minus_items.append("连续3期亏损/无盈利")
+
+    # ── 组装结果 ──
+    final_score = max(0.0, min(100.0, score))
+    parts = []
+    if plus_items:
+        parts.append("✓ " + "；".join(plus_items))
+    if minus_items:
+        parts.append("✗ " + "；".join(minus_items))
+    if notes:
+        parts.append("；".join(notes))
+    return final_score, " | ".join(parts) if parts else "财报粗评"
 
 
 def news_score(ctx: dict[str, Any]) -> tuple[float, dict[str, Any]]:

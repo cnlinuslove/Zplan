@@ -60,7 +60,70 @@ def _financial_rows(ts_code: str, limit: int = 8) -> list[dict[str, Any]]:
     ]
 
 
-def _trend_narrative(bars: pd.DataFrame) -> str:
+def _enrich_data(ts_code: str) -> dict[str, Any]:
+    """从 enrich_company 表拉取 P0+P1 数据填充模块 2/6/8。"""
+    result: dict[str, Any] = {
+        "industry_peers": None,
+        "research_reports": None,
+        "institutional_holdings": None,
+        "company_products": None,
+    }
+    try:
+        from zplan_shared.enrich_company import build_enrich_prompt_section
+        # 不直接拼 prompt text，而是用原始查询
+    except ImportError:
+        pass
+
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).resolve().parents[4] / "zplan-资讯" / "zplan.db"
+        if not db_path.exists():
+            return result
+        db = sqlite3.connect(str(db_path))
+        db.row_factory = sqlite3.Row
+
+        # Industry peers
+        cur = db.execute(
+            "SELECT * FROM industry_peers WHERE ts_code = ? ORDER BY as_of DESC LIMIT 1",
+            (ts_code,),
+        )
+        row = cur.fetchone()
+        if row:
+            result["industry_peers"] = dict(row)
+
+        # Research reports
+        cur = db.execute(
+            "SELECT * FROM research_reports WHERE ts_code = ? ORDER BY report_date DESC LIMIT 5",
+            (ts_code,),
+        )
+        rows = cur.fetchall()
+        if rows:
+            result["research_reports"] = [dict(r) for r in rows]
+
+        # Institutional holdings
+        cur = db.execute(
+            "SELECT * FROM institutional_holdings WHERE ts_code = ? ORDER BY as_of DESC LIMIT 1",
+            (ts_code,),
+        )
+        row = cur.fetchone()
+        if row:
+            result["institutional_holdings"] = dict(row)
+
+        # Company products (P2)
+        cur = db.execute(
+            "SELECT * FROM company_products WHERE ts_code = ? LIMIT 1",
+            (ts_code,),
+        )
+        row = cur.fetchone()
+        if row:
+            result["company_products"] = dict(row)
+
+        db.close()
+    except Exception:
+        pass
+
+    return result
     if len(bars) < 5:
         return "历史 K 线不足，无法描述趋势。"
     tail = bars.tail(60)
@@ -74,7 +137,77 @@ def _trend_narrative(bars: pd.DataFrame) -> str:
     )
 
 
-def _scenario_strategies(levels: dict[str, float | None], tech_verdict: str) -> list[str]:
+def _format_product_data(products: dict[str, Any] | None) -> str | None:
+    """格式化 P2 产品深度数据。"""
+    if not products:
+        return None
+    parts = []
+    if products.get("competitive_positioning"):
+        parts.append(f"竞争定位：{products['competitive_positioning'][:200]}")
+    if products.get("technology_moat"):
+        parts.append(f"技术护城河：{products['technology_moat'][:200]}")
+    if products.get("key_products_json"):
+        try:
+            kp = __import__("json").loads(products["key_products_json"])
+            if isinstance(kp, list) and kp:
+                parts.append(f"核心产品：{', '.join(str(x) for x in kp[:5])}")
+        except Exception:
+            pass
+    if products.get("growth_catalysts"):
+        parts.append(f"增长催化：{products['growth_catalysts'][:200]}")
+    return "；".join(parts) if parts else None
+
+
+def _format_holdings(holdings: dict[str, Any] | None) -> str | None:
+    """格式化 P1 机构持仓数据。"""
+    if not holdings:
+        return None
+    parts = []
+    if holdings.get("fund_count") is not None:
+        parts.append(f"基金持仓：{holdings['fund_count']} 只基金")
+    if holdings.get("north_bound_pct") is not None:
+        parts.append(f"北向持股：{holdings['north_bound_pct']:.1f}%")
+    if holdings.get("north_bound_mv") is not None:
+        parts.append(f"北向市值：{holdings['north_bound_mv']/1e8:.1f} 亿")
+    return "；".join(parts) if parts else None
+
+
+def _format_research_reports(reports: list[dict[str, Any]] | None) -> str | None:
+    """格式化 P1 机构研报。"""
+    if not reports:
+        return None
+    lines = []
+    for r in reports[:3]:
+        inst = r.get("institution") or "?"
+        rating = r.get("rating") or "-"
+        title = (r.get("title") or "")[:60]
+        eps = ""
+        if r.get("eps_2026"):
+            eps += f" 2026E EPS={r['eps_2026']:.2f}"
+        if r.get("eps_2027"):
+            eps += f" 2027E EPS={r['eps_2027']:.2f}"
+        lines.append(f"[{rating}] {inst}: {title}{eps}")
+    return "\n".join(lines) if lines else None
+
+
+def _format_industry_peers(peers: dict[str, Any] | None) -> str | None:
+    """格式化 P0 行业对标数据。"""
+    if not peers:
+        return None
+    parts = [f"行业: {peers.get('industry_name', '?')}（共 {peers.get('peer_count', '?')} 只）"]
+    if peers.get("rank_by_revenue") and peers.get("peer_count"):
+        parts.append(f"营收排名: {peers['rank_by_revenue']}/{peers['peer_count']}")
+    if peers.get("rank_by_profit") and peers.get("peer_count"):
+        parts.append(f"利润排名: {peers['rank_by_profit']}/{peers['peer_count']}")
+    if peers.get("rank_by_market_cap") and peers.get("peer_count"):
+        parts.append(f"市值排名: {peers['rank_by_market_cap']}/{peers['peer_count']}")
+    if peers.get("industry_med_pe") is not None:
+        parts.append(f"行业中位数PE: {peers['industry_med_pe']:.1f}")
+    if peers.get("industry_med_pb") is not None:
+        parts.append(f"行业中位数PB: {peers['industry_med_pb']:.2f}")
+    if peers.get("industry_med_roe") is not None:
+        parts.append(f"行业中位数ROE: {peers['industry_med_roe']:.1f}%")
+    return "；".join(parts)
     buy = levels.get("suggested_buy")
     target = levels.get("target_price")
     stop = levels.get("stop_loss")
@@ -116,6 +249,7 @@ def build_research_report(
     levels = price_levels(bars)
     ctx = get_pick_context(code, news_hours=news_hours)
     profile = get_company_profile(code)
+    enrich = _enrich_data(code)   # P0+P1+P2 深度数据
     fin_rows = _financial_rows(code)
     fin_sc, fin_note = financial_score_from_rows(fin_rows)
     if not fin_rows:
@@ -175,6 +309,7 @@ def build_research_report(
             },
             "2_核心产品": {
                 "核心产品": (profile or {}).get("core_products_json") or "待扩展",
+                "产品深度": _format_product_data(enrich.get("company_products")),
                 "news_mentions_48h": news_total,
             },
             "3_创始团队": {
@@ -199,7 +334,8 @@ def build_research_report(
                 "数据来源": "financial_indicators + daily_snapshot",
             },
             "6_投资持仓": {
-                "状态": snap_row or "待 Phase B 股东持仓 ETL",
+                "状态": _format_holdings(enrich.get("institutional_holdings")) or snap_row or "待 Phase B 股东持仓 ETL",
+                "机构研报": _format_research_reports(enrich.get("research_reports")),
             },
             "7_公司风险": {
                 "技术风险": tech.signals,
@@ -209,6 +345,7 @@ def build_research_report(
             "8_核心竞争力": {
                 "档案摘要": (profile or {}).get("positioning"),
                 "舆情": linked,
+                "行业对标": _format_industry_peers(enrich.get("industry_peers")),
             },
         },
         "投资建议": {
@@ -229,78 +366,216 @@ def build_research_report(
 
 
 def format_report_markdown(report: dict[str, Any]) -> str:
+    """规则引擎 Markdown 研报（8 模块完整结构）。"""
     meta = report["meta"]
     title = meta.get("name") or meta["ts_code"]
+    modules = report["modules"]
+    advice = report["投资建议"]
+
     lines = [
         f"# {title}（{meta['ts_code']}）投资研究报告",
         "",
         f"> 数据截止：{report.get('as_of', '—')} | 规则：{report.get('rule_version', '—')} | "
-        f"综合推荐分：**{report['投资建议']['综合推荐分']}**",
+        f"综合推荐分：**{advice['综合推荐分']}** | 操作建议：**{advice.get('操作建议', '—')}**",
         "",
-        "## 1. 公司基本信息",
-        f"- 行业：{report['modules']['1_基本信息'].get('行业')}",
-        f"- 上市日期：{report['modules']['1_基本信息'].get('上市日期') or '—'}",
+        "---",
         "",
-        "## 4. 股价分析（核心）",
-        report["modules"]["4_股价分析"]["趋势叙述"],
-        "",
-        f"**技术面**：{report['modules']['4_股价分析']['技术面结论']}（得分 {report['modules']['4_股价分析']['技术得分']}）",
     ]
-    ind_rel = report["modules"]["4_股价分析"].get("行业相对")
+
+    # ═══ 1. 公司基本信息 ═══
+    m1 = modules.get("1_基本信息", {})
+    lines.extend([
+        "## 1. 公司基本信息",
+        "",
+        f"- **行业**：{m1.get('行业', '—')}",
+        f"- **公司定位**：{m1.get('公司定位', '—')}",
+        f"- **上市日期**：{m1.get('上市日期', '—')}",
+        f"- **官网**：{m1.get('官网', '—')}",
+        f"- **数据来源**：{m1.get('数据来源', '—')}",
+        "",
+    ])
+
+    # ═══ 2. 核心产品 ═══
+    m2 = modules.get("2_核心产品", {})
+    products = m2.get("核心产品", "")
+    lines.append("## 2. 核心产品")
+    lines.append("")
+    if products and products != "待扩展":
+        lines.append(f"- {products}")
+    else:
+        lines.append("> ⚠️ 产品数据待充实（需 enrich_company P2 深度调研或资讯 Agent 扩展公司档案）")
+    if m2.get("news_mentions_48h"):
+        lines.append(f"- 48h 新闻提及：{m2['news_mentions_48h']} 条")
+    lines.append("")
+
+    # ═══ 3. 创始团队 ═══
+    m3 = modules.get("3_创始团队", {})
+    team = m3.get("团队", "")
+    lines.append("## 3. 创始团队与核心管理层")
+    lines.append("")
+    if team and team != "待扩展":
+        lines.append(f"- {team}")
+    else:
+        lines.append("> ⚠️ 管理层数据待充实（需 enrich_company P0 公司档案扩展）")
+    lines.append("")
+
+    # ═══ 4. 股价分析（核心）═══
+    m4 = modules.get("4_股价分析", {})
+    lines.extend([
+        "## 4. 股价分析（核心）",
+        "",
+        "### 4.1 趋势",
+        m4.get("趋势叙述", "—"),
+        "",
+        f"**技术面结论**：{m4.get('技术面结论', '—')}（得分 {m4.get('技术得分', '—')}）",
+    ])
+    ind_rel = m4.get("行业相对")
     if ind_rel:
-        lines.append(f"- {ind_rel}")
-    lines.extend(["", "**关键信号**："])
-    for sig in report["modules"]["4_股价分析"]["关键信号"] or ["（无显著信号）"]:
+        lines.append(f"- 行业相对强度：{ind_rel}")
+    lines.extend(["", "### 4.2 关键信号", ""])
+    for sig in m4.get("关键信号") or ["（无显著信号）"]:
         lines.append(f"- {sig}")
 
-    # 筹码峰
-    chip_data = report["modules"]["4_股价分析"].get("筹码分布") or {}
-    if chip_data.get("available"):
+    # 筹码分布
+    chip = m4.get("筹码分布") or {}
+    if chip.get("available"):
         lines.extend([
             "",
-            "**筹码分布**：",
-            f"- 获利比例：{chip_data['profit_ratio']:.1f}%",
-            f"- 平均成本：{chip_data['avg_cost']:.2f}",
-            f"- 90%筹码区间：[{chip_data['cost_90_low']:.2f}, {chip_data['cost_90_high']:.2f}]",
-            f"- 90%集中度：{chip_data['concentration_90']:.4f}",
-            f"- 70%集中度：{chip_data['concentration_70']:.4f}",
-            f"- 数据截止：{chip_data.get('as_of', '—')}",
+            "### 4.3 筹码分布",
+            f"- 获利比例：{chip['profit_ratio']:.1f}%　|　平均成本：{chip['avg_cost']:.2f}",
+            f"- 90%筹码区间：[{chip['cost_90_low']:.2f}, {chip['cost_90_high']:.2f}]",
+            f"- 90%集中度：{chip['concentration_90']:.4f}　|　70%集中度：{chip['concentration_70']:.4f}",
+            f"- 数据截止：{chip.get('as_of', '—')}",
         ])
 
-    snap = report["modules"]["4_股价分析"]["指标快照"]
+    # 分时特征
+    intraday = m4.get("分时特征")
+    if intraday:
+        lines.extend(["", "### 4.4 分时特征", f"- {intraday}"])
+
+    # 指标快照
+    snap = m4.get("指标快照")
     if snap:
-        lines.extend(["", "**指标快照**：", "```"])
+        lines.extend(["", "### 4.5 指标快照", "", "```"])
         for k, v in snap.items():
             if v is not None:
                 lines.append(f"{k}: {v}")
         lines.append("```")
+    lines.append("")
 
-    lines.extend(
-        [
+    # ═══ 5. 财务情况 ═══
+    m5 = modules.get("5_财务情况", {})
+    lines.extend([
+        "## 5. 财务情况",
+        "",
+        m5.get("评语", "—"),
+        "",
+        f"**财务得分**：{m5.get('财务得分', '—')}",
+        "",
+    ])
+    # 近三年财务记录
+    fin_rows = m5.get("近三年记录") or []
+    if fin_rows:
+        lines.extend([
+            "**近期财务数据**：",
             "",
-            "## 5. 财务情况",
-            report["modules"]["5_财务情况"]["评语"],
-            "",
-            "## 7. 公司风险",
-            f"- 48h 新闻：{report['modules']['7_公司风险'].get('新闻条数_48h', 0)} 条",
-            "",
-            "## 投资建议",
-            report["投资建议"]["总结"],
-            "",
-            f"- **操作建议**：{report['投资建议']['操作建议']}",
-            f"- **建议买入价**：{report['投资建议']['建议买入价']}",
-            f"- **目标价**：{report['投资建议']['目标价']}",
-            f"- **止损参考**：{report['投资建议']['止损参考']}",
-            "",
-            "### 不同走势应对",
-        ]
-    )
-    for s in report["投资建议"]["走势应对"]:
+            "| 报告期 | PE(TTM) | PB | 营收(亿) | 净利润(亿) | ROE(%) |",
+            "|--------|---------|-----|---------|-----------|--------|",
+        ])
+        for r in fin_rows[:8]:
+            rev = f"{r['revenue']/1e8:.1f}" if r.get("revenue") else "—"
+            np_ = f"{r['net_profit']/1e8:.2f}" if r.get("net_profit") else "—"
+            pe = f"{r['pe_ttm']:.1f}" if r.get("pe_ttm") else "—"
+            pb = f"{r['pb']:.2f}" if r.get("pb") else "—"
+            roe = f"{r['roe']:.1f}" if r.get("roe") else "—"
+            lines.append(f"| {r.get('report_date', '—')} | {pe} | {pb} | {rev} | {np_} | {roe} |")
+        lines.append("")
+
+    # 估值截面
+    snap_row = m5.get("估值截面")
+    if snap_row and isinstance(snap_row, dict):
+        pe = snap_row.get("pe_ttm")
+        pb = snap_row.get("pb")
+        mv = snap_row.get("total_mv")
+        if pe or pb or mv:
+            lines.append("**估值截面**：")
+            if pe:
+                lines.append(f"- PE(TTM)：{pe:.2f}")
+            if pb:
+                lines.append(f"- PB：{pb:.2f}")
+            if mv:
+                lines.append(f"- 总市值：{mv/1e8:.1f} 亿")
+            lines.append("")
+
+    # ═══ 6. 投资持仓 ═══
+    m6 = modules.get("6_投资持仓", {})
+    lines.append("## 6. 获得投资情况")
+    lines.append("")
+    if m6 and m6.get("状态") and "待" not in str(m6.get("状态")):
+        lines.append(f"- {m6.get('状态', '—')}")
+    else:
+        lines.append("> ⚠️ 机构持仓数据待充实（需 enrich_company P1 股东+北向+基金 ETL）")
+    lines.append("")
+
+    # ═══ 7. 公司风险 ═══
+    m7 = modules.get("7_公司风险", {})
+    lines.extend([
+        "## 7. 公司风险",
+        "",
+        f"- 48h 新闻：{m7.get('新闻条数_48h', 0)} 条",
+    ])
+    # 舆情风险
+    event_types = m7.get("舆情风险") or {}
+    if event_types:
+        lines.append("- 事件类型分布：")
+        for evt, cnt in event_types.items():
+            lines.append(f"  - {evt}：{cnt} 条")
+    # 技术风险
+    tech_risks = m7.get("技术风险") or []
+    if tech_risks:
+        lines.append(f"- 技术面风险：{tech_risks}")
+    lines.append("")
+
+    # ═══ 8. 核心竞争力 ═══
+    m8 = modules.get("8_核心竞争力", {})
+    lines.append("## 8. 核心竞争力")
+    lines.append("")
+    positioning = m8.get("档案摘要")
+    if positioning and positioning != "待资讯域补充":
+        lines.append(f"- 公司定位：{positioning}")
+    news_linked = m8.get("舆情") or {}
+    if news_linked:
+        news_summary = news_linked.get("summary") or news_linked.get("event_types")
+        if news_summary:
+            lines.append(f"- 近期舆情：{news_summary}")
+    lines.append("")
+
+    # ═══ 投资建议 ═══
+    lines.extend([
+        "---",
+        "",
+        "## 投资建议",
+        "",
+        advice["总结"],
+        "",
+        f"| 项目 | 价格 |",
+        f"|------|------|",
+        f"| 操作建议 | **{advice['操作建议']}** |",
+        f"| 建议买入价 | {advice.get('建议买入价', '—')} |",
+        f"| 目标价 | {advice.get('目标价', '—')} |",
+        f"| 止损参考 | {advice.get('止损参考', '—')} |",
+        f"| 综合推荐分 | {advice.get('综合推荐分', '—')} / 100 |",
+        "",
+        "### 不同走势应对",
+        "",
+    ])
+    for s in advice.get("走势应对") or []:
         lines.append(f"- {s}")
 
+    # 附录：数据缺口
     gaps = report.get("data_gaps_for_other_agents") or []
     if gaps:
-        lines.extend(["", "## 其他 Agent 数据需求", ""])
+        lines.extend(["", "## 附录：数据缺口"])
         for g in gaps:
             lines.append(f"- {g}")
 
