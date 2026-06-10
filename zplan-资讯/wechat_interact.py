@@ -22,6 +22,7 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 from agents.info_query import answer_info_question
 from agents.news_agent import get_history_payload
 from chat_session import session_active, touch_session, expire_session
+from claude_tasks import queue as claude_task_queue
 from config import CHAT_HISTORY_ENABLED
 from models import init_db
 from pick_wechat import try_handle_pick
@@ -402,6 +403,14 @@ def _normalize_user_text(message: str) -> str:
     return raw or (message or "").strip()
 
 
+_POLL_INTERVAL_SECONDS = 60
+
+
+def _next_poll_eta() -> str:
+    """返回轮询器下次检查的预估时间（人性化）。"""
+    return f"最多 {_POLL_INTERVAL_SECONDS} 秒"
+
+
 # ── 上下文功能提示 ──────────────────────────────────────────
 
 _HINT_MAP: dict[str, str] = {
@@ -420,6 +429,7 @@ _HINT_MAP: dict[str, str] = {
     "help": "💡 新上线：持仓追踪、股票对比、多轮追问。选股报告后可追问「目标价合理吗？」",
     "history_latest": "💡 发送「选股清单」看推荐 | 直接提问如「北向资金最近走势如何」",
     "topic_list": "💡 发送「查 北向资金」按 topic 搜索 | 「最新」看今日快讯",
+    "claude_task": "💡 发送「claude 任务描述」让 Claude 远程改代码，完成后企微推送结果",
 }
 
 # 不追加提示的意图（报错、会话管理等）
@@ -762,6 +772,30 @@ def _handle_inbound_text_impl(
             expire_session(chat_id)
             return _reply_payload("session_end", "已结束当前会话窗口。再次发送消息时请 @我。")
         return _reply_payload("help", HELP_TEXT)
+
+    # ── Claude Code 远程任务 ──
+    if low.startswith("claude ") or low.startswith("@claude ") or low.startswith("claude,"):
+        task_text = re.sub(r"^(?:@?claude[,\s]+)", "", raw, flags=re.IGNORECASE).strip()
+        if not task_text:
+            return _reply_payload(
+                "claude_task",
+                "请描述需要 Claude 处理的任务。\n"
+                "示例：「claude 修改选股报告格式，把风险提示放在最前面」",
+            )
+        task = claude_task_queue.create_task(
+            text=task_text,
+            user_id=user_id or "",
+            chat_id=chat_id or "",
+        )
+        tid_short = task["id"][:8]
+        text_preview = task_text[:150] + ("…" if len(task_text) > 150 else "")
+        return _reply_payload(
+            "claude_task",
+            f"📋 任务已入队\n\n"
+            f"ID: `{tid_short}…`\n"
+            f"内容: {text_preview}\n\n"
+            f"Claude 将在 {_next_poll_eta()} 内开始处理，完成后企微推送结果。",
+        )
 
     # ── Topic 摘要 ──
     if low in ("最新", "latest", "摘要"):

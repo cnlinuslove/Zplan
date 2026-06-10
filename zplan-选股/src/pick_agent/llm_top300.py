@@ -48,8 +48,8 @@ def _deepen_one_pick(
     panel: pd.DataFrame,
 ) -> dict[str, Any]:
     code = p["ts_code"]
-    tech = analyze_technical(code, min_bars=strategy.min_bars)
-    ctx = get_pick_context(code)
+    tech = analyze_technical(code, min_bars=strategy.min_bars, as_of=trade_date)
+    ctx = get_pick_context(code, as_of=trade_date)
     fin_df = get_financials(code, limit=8)
     fin_rows = fin_df.to_dict("records") if not fin_df.empty else []
     fin_sc, _ = financial_score_from_rows(fin_rows)
@@ -210,7 +210,7 @@ def run_llm_top_from_rule_scores(
     if not shallow:
         return {"ok": False, "message": f"{as_of_d} 无规则分记录"}
 
-    trade_date = latest_trade_date()
+    trade_date = as_of_d or latest_trade_date()  # 历史回测时用 as_of，生产时用最新
     picks = (
         _deepen_picks(shallow, strategy=strat, trade_date=trade_date, workers=deepen_workers)
         if deepen

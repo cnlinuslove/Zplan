@@ -136,6 +136,30 @@ cd zplan-回测 && .venv/bin/python main.py iterate history
 
 改 prompt/strategy 后必须 **重跑 llm-top**，再 **iterate verify** 对比 `fail_rate`。
 
+## 远程任务（企微 → Claude Code）
+
+用户可通过企微 `@bot claude <任务描述>` 发送远程任务。launchd 轮询器自动调用 `claude -p` 处理。
+
+**任务队列：** `zplan-资讯/claude_tasks/queue.jsonl`  
+**轮询器：** `com.zplan.claude-task-poller`（每 60 秒）  
+**日志：** `zplan-资讯/logs/claude_task_poller.log`
+
+每次 Claude Code 会话启动时，先检查队列是否有 `pending` 任务：
+```bash
+cd zplan-资讯 && .venv/bin/python -c "
+from claude_tasks import queue as q
+pending = q.list_tasks('pending')
+if pending:
+    print(f'??? {len(pending)} 个待处理任务')
+    for t in pending:
+        print(f'  - [{t[\"id\"][:8]}] {t[\"text\"][:100]}')
+else:
+    print('? 无待处理任务')
+"
+```
+
+有任务时主动处理并推送结果到企微。
+
 ## 编码约定
 
 - Python ≥ 3.12，各 Agent 独立 `.venv`，共享包 `-e ../zplan-共享`

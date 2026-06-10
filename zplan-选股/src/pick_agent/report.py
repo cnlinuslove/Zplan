@@ -77,16 +77,19 @@ def _enrich_data(ts_code: str) -> dict[str, Any]:
     try:
         import sqlite3
         from pathlib import Path
-        db_path = Path(__file__).resolve().parents[4] / "zplan-资讯" / "zplan.db"
+        db_path = Path(__file__).resolve().parents[3] / "zplan-资讯" / "zplan.db"
         if not db_path.exists():
             return result
         db = sqlite3.connect(str(db_path))
         db.row_factory = sqlite3.Row
 
+        # enrich 表存的是纯数字代码（无后缀），统一格式
+        code = str(ts_code).replace(".SZ", "").replace(".SH", "").replace(".BJ", "").replace(".HK", "")
+
         # Industry peers
         cur = db.execute(
             "SELECT * FROM industry_peers WHERE ts_code = ? ORDER BY as_of DESC LIMIT 1",
-            (ts_code,),
+            (code,),
         )
         row = cur.fetchone()
         if row:
@@ -95,7 +98,7 @@ def _enrich_data(ts_code: str) -> dict[str, Any]:
         # Research reports
         cur = db.execute(
             "SELECT * FROM research_reports WHERE ts_code = ? ORDER BY report_date DESC LIMIT 5",
-            (ts_code,),
+            (code,),
         )
         rows = cur.fetchall()
         if rows:
@@ -104,7 +107,7 @@ def _enrich_data(ts_code: str) -> dict[str, Any]:
         # Institutional holdings
         cur = db.execute(
             "SELECT * FROM institutional_holdings WHERE ts_code = ? ORDER BY as_of DESC LIMIT 1",
-            (ts_code,),
+            (code,),
         )
         row = cur.fetchone()
         if row:
@@ -113,7 +116,7 @@ def _enrich_data(ts_code: str) -> dict[str, Any]:
         # Company products (P2)
         cur = db.execute(
             "SELECT * FROM company_products WHERE ts_code = ? LIMIT 1",
-            (ts_code,),
+            (code,),
         )
         row = cur.fetchone()
         if row:
@@ -163,6 +166,16 @@ def _format_holdings(holdings: dict[str, Any] | None) -> str | None:
     if not holdings:
         return None
     parts = []
+    # 前三大股东
+    if holdings.get("top_holders_json"):
+        try:
+            import json as _json
+            holders = _json.loads(holdings["top_holders_json"])
+            if holders:
+                top3 = "、".join(f'{h["name"]}({h.get("pct","?")}%)' for h in holders[:3])
+                parts.append(f"前三大股东：{top3}")
+        except Exception:
+            pass
     if holdings.get("fund_count") is not None:
         parts.append(f"基金持仓：{holdings['fund_count']} 只基金")
     if holdings.get("north_bound_pct") is not None:
@@ -208,6 +221,23 @@ def _format_industry_peers(peers: dict[str, Any] | None) -> str | None:
     if peers.get("industry_med_roe") is not None:
         parts.append(f"行业中位数ROE: {peers['industry_med_roe']:.1f}%")
     return "；".join(parts)
+
+
+def _format_snapshot(snap: dict[str, Any] | None) -> str | None:
+    """格式化 daily_snapshot 为可读文本。"""
+    if not snap:
+        return None
+    parts = []
+    pe = snap.get("pe_ttm")
+    pb = snap.get("pb")
+    mv = snap.get("total_mv")
+    if pe is not None:
+        parts.append(f"PE(TTM): {pe:.1f}")
+    if pb is not None:
+        parts.append(f"PB: {pb:.2f}")
+    if mv is not None:
+        parts.append(f"总市值: {mv/1e8:.0f}亿")
+    return "；".join(parts) if parts else None
 
 
 def _trend_narrative(bars: pd.DataFrame) -> str:
@@ -351,7 +381,9 @@ def build_research_report(
                 "数据来源": "financial_indicators + daily_snapshot",
             },
             "6_投资持仓": {
-                "状态": _format_holdings(enrich.get("institutional_holdings")) or snap_row or "待 Phase B 股东持仓 ETL",
+                "状态": _format_holdings(enrich.get("institutional_holdings"))
+                       or (_format_snapshot(snap_row) if snap_row else None)
+                       or "待 Phase B 股东持仓 ETL",
                 "机构研报": _format_research_reports(enrich.get("research_reports")),
             },
             "7_公司风险": {
@@ -528,9 +560,18 @@ def format_report_markdown(report: dict[str, Any]) -> str:
     m6 = modules.get("6_投资持仓", {})
     lines.append("## 6. 获得投资情况")
     lines.append("")
-    if m6 and m6.get("状态") and "待" not in str(m6.get("状态")):
-        lines.append(f"- {m6.get('状态', '—')}")
-    else:
+    holdings_text = m6.get("状态", "")
+    reports_text = m6.get("机构研报", "")
+    if holdings_text and not str(holdings_text).startswith("{") and "待" not in str(holdings_text):
+        lines.append(f"- {holdings_text}")
+    if reports_text and str(reports_text).strip():
+        lines.append("")
+        lines.append("**近期机构研报**：")
+        lines.append("")
+        for line in str(reports_text).split("\n"):
+            if line.strip():
+                lines.append(f"- {line.strip()}")
+    if (not holdings_text or str(holdings_text).startswith("{") or "待" in str(holdings_text)) and not reports_text:
         lines.append("> ⚠️ 机构持仓数据待充实（需 enrich_company P1 股东+北向+基金 ETL）")
     lines.append("")
 

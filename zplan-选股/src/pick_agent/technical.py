@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -26,8 +27,11 @@ class TechnicalSnapshot:
     verdict: str = "中性"
 
 
-def analyze_technical(ts_code: str, *, min_bars: int = 60) -> TechnicalSnapshot:
-    bars = get_bars(ts_code)
+def analyze_technical(ts_code: str, *, min_bars: int = 60, as_of: date | None = None) -> TechnicalSnapshot:
+    bars = get_bars(ts_code, end=as_of)
+    if as_of is not None and not bars.empty:
+        bars.index = pd.DatetimeIndex(pd.to_datetime(bars.index))
+        bars = bars[bars.index <= pd.Timestamp(as_of)]
     snap = TechnicalSnapshot(ts_code=ts_code, bars=len(bars), as_of=None, close=None)
     if len(bars) < min_bars:
         snap.verdict = "数据不足"

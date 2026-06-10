@@ -1,7 +1,7 @@
 """选股上下文：近端分时微观结构 + 资讯域只读摘要（Phase A.1 + P0 news_stock_link）。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -158,10 +158,16 @@ def _news_sentiment_summary(events: list[dict[str, Any]], mentions: dict[str, in
     return {"positive": pos, "negative": neg, "total": mentions.get("total", 0)}
 
 
-def get_pick_context(ts_code: str, *, news_hours: int = 48) -> dict[str, Any]:
-    """单票选股上下文：分时微观结构 + 关联新闻（news_stock_link 优先）。"""
+def get_pick_context(ts_code: str, *, news_hours: int = 48, as_of: date | None = None) -> dict[str, Any]:
+    """单票选股上下文：分时微观结构 + 关联新闻（news_stock_link 优先）。
+
+    ``as_of`` 为 None 时用当前时间（生产模式）；传 date 时用于历史回测。
+    """
     code = resolve_ts_code(ts_code)
-    since = datetime.utcnow() - timedelta(hours=news_hours)
+    if as_of is not None:
+        since = datetime.combine(as_of, datetime.min.time()) - timedelta(hours=news_hours)
+    else:
+        since = datetime.utcnow() - timedelta(hours=news_hours)
 
     init_db()
     industry: str | None = None

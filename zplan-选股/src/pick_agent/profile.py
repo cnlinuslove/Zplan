@@ -37,6 +37,8 @@ def get_company_profile(ts_code: str) -> dict[str, Any] | None:
         return None
 
     code = resolve_ts_code(ts_code)
+    # enrich 表存纯数字代码
+    code_no_suffix = str(code).replace(".SZ", "").replace(".SH", "").replace(".BJ", "").replace(".HK", "")
     with SessionLocal() as session:
         row = session.execute(
             text(
@@ -45,7 +47,7 @@ def get_company_profile(ts_code: str) -> dict[str, Any] | None:
                 "industry_csrc, industry_sw, list_date, fetched_at "
                 "FROM company_profiles WHERE ts_code = :c"
             ),
-            {"c": code},
+            {"c": code_no_suffix},
         ).mappings().first()
 
     if not row:

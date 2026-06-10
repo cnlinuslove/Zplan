@@ -153,7 +153,9 @@ def _enrich_block(ts_code: str) -> str:
     if _build_enrich_section is None:
         return ""
     try:
-        section = _build_enrich_section(str(ts_code))
+        # enrich 表存纯数字代码（无后缀）
+        code = str(ts_code).replace(".SZ", "").replace(".SH", "").replace(".BJ", "").replace(".HK", "")
+        section = _build_enrich_section(code)
         if section.strip():
             return f"\n【深度数据：公司档案/行业对比/机构研报/持仓】\n{section}\n"
     except Exception:
