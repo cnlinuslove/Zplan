@@ -68,7 +68,7 @@ rule_init:
 
 # 最终排序：LLM 综合分为主，规则分做候选池约束（buy_unreachable 修复后 LLM 主导）
 ranking:
-  mode: llm_primary        # rule_filtered | rule_primary | blend | llm_primary
+  mode: rule_filtered       # rule_filtered: 规则分为主，LLM风险扣分微调（回测验证优于 llm_primary）
   llm_weight: 0.80         # mode=blend 时生效
   rule_weight: 0.20
   llm_risk_penalty: 5.0    # 适度惩罚（不宜过大，避免 LLM 不敢给分）

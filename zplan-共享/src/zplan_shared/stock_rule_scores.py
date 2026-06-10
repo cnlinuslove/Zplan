@@ -125,6 +125,7 @@ def top_rule_scores(
     out: list[dict[str, Any]] = []
     for r in rows:
         signals = json.loads(r.signals_json) if r.signals_json else []
+        features = json.loads(r.features_json) if r.features_json else {}
         out.append(
             {
                 "ts_code": r.ts_code,
@@ -134,6 +135,8 @@ def top_rule_scores(
                 "verdict": r.verdict,
                 "close": r.close_price,
                 "signals": signals,
+                "features": features,
+                "features_json": r.features_json,
                 "rank_rule": r.rank_by_composite,
             }
         )

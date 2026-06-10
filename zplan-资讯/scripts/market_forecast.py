@@ -60,7 +60,7 @@ _FORECAST_SCHEMA: dict[str, Any] = {
                 "direction": {"type": "string", "enum": ["bullish", "bearish", "range-bound"]},
                 "confidence": {
                     "type": "number",
-                    "description": "置信度 0-100。规则：权重差≤3→40-50%；差4-7→50-65%；差≥8→65-80%。严禁所有预测都给同一档置信度。"
+                    "description": "置信度 0-100。规则：差2-4→45-55%；差5-7→55-65%；差≥8→65-75%。看跌门槛更低(bear_w ≥ bull_w+2即可看跌)，看涨门槛更高(bull_w ≥ bear_w+5才看涨)。"
                 },
                 "reasoning": {"type": "string", "description": "综合判断理由，80-150字。必须提到多空信号对比。"},
                 "bullish_signals": {
@@ -355,11 +355,12 @@ def _build_forecast_prompt(
 【⚠️ 核心方法论 — 必须遵守】
 1. **先列信号，后下结论**：先分别列出 bullish_signals 和 bearish_signals，每条标注强度（1-3），根据总权重对比得出方向。**禁止先有结论再挑信号。**
 2. **权重校准**：看涨信号总权重和看跌信号总权重的**比例决定方向，差值决定置信度**。如果一侧信号全是 weight=3 而另一侧多是 weight=1，说明信号质量差异巨大，应更确信。
-3. **判断规则（关键！）**：
-   - 权重差 ≤ 3 → **range-bound**（信号不够明确，不要勉强选边）
-   - 权重差 4-7 → bullish/bearish，置信度 50-65%
-   - 权重差 ≥ 8 → bullish/bearish，置信度 65-80%
-4. **方向分布先验**：A 股历史上日线方向分布约为 bullish 40%、bearish 35%、range-bound 25%。**你今天的预测在 10 次中应有约 4 次看涨、3-4 次看跌、2-3 次看震荡。** 如果你发现自己连续 6 次都是同一方向，说明你可能在忽略相反信号。
+3. **判断规则（关键！）range-bound 不是默认值，必须有意使用**：
+   - **range-bound 门槛最高**：仅当 bull_w 和 bear_w 差 ≤ 1（几乎完全平衡）时才能给 range-bound。日常交易中日线方向明确才是常态。
+   - **bearish 门槛最低**（对抗数据天然偏多）：bear_w ≥ bull_w + 1 → bearish。只要空头信号略微占优就应看跌。
+   - **bullish 门槛居中**：bull_w ≥ bear_w + 3 → bullish。多头信号需要清晰占优才能看涨。
+   - 置信度：差 1-3 → 45-55%、差 4-6 → 55-65%、差 ≥ 7 → 65-75%
+   - **犹豫时选 bearish 而不是 range-bound**：如果你在 bearish 和 range-bound 之间纠结 → 选 bearish。如果你在 bullish 和 range-bound 之间纠结 → 选 bullish。A 股极少出现真正的「平盘」。
 5. **恐慌日特殊处理**：如果当日大跌（中位数 < -1.5%），这本身不是看跌理由（已经跌完了）。重点看历史相似形态：如果多数指数形态显示高胜率反弹（≥67% 胜率 + 正前向收益）→ 看涨（均值回归）；如果多数指数形态也显示低胜率 → 看跌（趋势延续）。
 6. **今日涨跌 ≠ 明日方向**：当日涨跌是最弱的信号（weight=1），仅作背景参考。历史相似形态的前向收益才是最强的预测信号（weight=3）。
 7. **反向自检**：下结论前问自己：「如果我的判断错了，最可能是因为什么？」把答案写入 key_uncertainty。

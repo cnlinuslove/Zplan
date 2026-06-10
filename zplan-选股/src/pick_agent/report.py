@@ -208,6 +208,23 @@ def _format_industry_peers(peers: dict[str, Any] | None) -> str | None:
     if peers.get("industry_med_roe") is not None:
         parts.append(f"行业中位数ROE: {peers['industry_med_roe']:.1f}%")
     return "；".join(parts)
+
+
+def _trend_narrative(bars: pd.DataFrame) -> str:
+    if len(bars) < 5:
+        return "历史 K 线不足，无法描述趋势。"
+    tail = bars.tail(60)
+    start_c = float(tail["close"].iloc[0])
+    end_c = float(tail["close"].iloc[-1])
+    chg = (end_c / start_c - 1) * 100 if start_c else 0
+    direction = "上涨" if chg > 3 else ("下跌" if chg < -3 else "震荡")
+    return (
+        f"近 60 交易日收盘由 {start_c:.2f} 至 {end_c:.2f}，区间涨跌约 {chg:+.2f}%，整体呈{direction}。"
+        f"数据来源：zplan.db daily_prices（前复权）。"
+    )
+
+
+def _scenario_strategies(levels: dict[str, float | None], tech_verdict: str) -> list[str]:
     buy = levels.get("suggested_buy")
     target = levels.get("target_price")
     stop = levels.get("stop_loss")

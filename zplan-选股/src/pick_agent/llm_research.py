@@ -835,6 +835,7 @@ _LLM_BRIEF_RULES = """
 - ret_20d>7% → 最高「观望」（除非有极强正面催化剂可升至「关注」）。
 - 基本面恶化或监管/减持 → 「回避」。
 - 其余情况综合判断，鼓励给出明确方向，减少「观望」。
+- ⚠️ 回测数据表明：「强烈关注」「积极关注」的票历史上平均亏损 -8~-15%。请克制使用最高两级推荐，除非有极明确的催化剂+低风险组合。宁可多给「关注」而非「强烈关注」。
 
 【trend_one_liner 要求】
 - 引用 JSON 中具体数值（ret_20d、vol_ratio20、KDJ K/D、signals 等），≤60 字。
@@ -983,6 +984,26 @@ def _apply_risk_penalty(
         out["recommendation"] = "关注"
     if ret20 is not None and float(ret20) > 7 and rec in ("强烈关注", "关注", "观望"):
         out["recommendation"] = "谨慎"
+
+    # ── 反热情惩罚（数据驱动）─────────────────────────────
+    # 回测发现：LLM 标记「强烈关注」「积极关注」的票前向收益最差（-8~-15%）。
+    # confidence_adjustment > 3 时，LLM 过度乐观也是反向指标（-5~-10%）。
+    # 策略：过度热情的推荐降级 + 额外扣分。
+    over_enthusiasm = False
+    if any(w in rec for w in ["强烈关注", "积极关注"]):
+        over_enthusiasm = True
+    if confidence_adj > 3:
+        over_enthusiasm = True
+
+    if over_enthusiasm:
+        extra_penalty = 5.0
+        risk_penalty += extra_penalty
+        out["_anti_enthusiasm_penalty"] = extra_penalty
+        # 热情降级：强烈关注→关注，积极关注→观望
+        if "强烈关注" in rec:
+            out["recommendation"] = "关注"
+        elif "积极关注" in rec:
+            out["recommendation"] = "观望"
 
     # 计算最终分
     final_score = rule + confidence_adj - risk_penalty + positive_boost
