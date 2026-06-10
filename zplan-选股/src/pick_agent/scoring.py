@@ -196,39 +196,40 @@ def verdict_from_score(score: float) -> str:
 def quick_technical_score(features: dict[str, float | None]) -> float:
     """向量化预筛用的轻量技术分（与 analyze_technical 共用 P0 快照字段）。
 
-    2026-06：减弱追涨奖励，奖励均值回归，惩罚缩量上涨。
+    2026-06-10: 减弱动量驱动加分，增强反转因子权重。
+    —— 规则分审计发现：动量加分导致高分=追涨=亏损，反转因子才是 alpha 来源。
     """
     score = 50.0
     ma5, ma20, ma60 = features.get("ma5"), features.get("ma20"), features.get("ma60")
     if ma5 and ma20 and ma60:
         if ma5 > ma20 > ma60:
-            score += 8           # was +15，减弱追涨偏好
+            score += 5           # was +8，减弱追涨偏好
         elif ma5 < ma20 < ma60:
             score -= 15
     if feature_flag(features, "ma5_cross_ma20"):
-        score += 8
+        score += 5               # was +8
     if feature_flag(features, "macd_cross_up"):
-        score += 6
+        score += 4               # was +6
     if feature_flag(features, "kdj_golden_cross"):
-        score += 5
+        score += 3               # was +5
     elif feature_flag(features, "kdj_death_cross"):
         score -= 5
     ret20 = features.get("ret_20d")
     if ret20 is not None:
         score -= momentum_penalty(ret20)
         if ret20 < -12:
-            score += 5            # 深度超卖→均值回归机会（ML r=-0.56）
+            score += 8            # was +5，深度超卖→强均值回归机会
         elif ret20 < -7:
-            score += 3            # 中度回调→低吸机会
+            score += 5            # was +3，中度回调→低吸机会
         elif -3 <= ret20 <= 3:
-            score += 4            # 横盘整理/低吸区
+            score += 6            # was +4，横盘整理/低吸区
         elif ret20 > 5:
             score -= 2            # 追涨惩罚（预筛已剔除 >5%）
     hist = features.get("macd_hist")
     if hist is not None and hist > 0:
-        score += 4
+        score += 3               # was +4
     if feature_flag(features, "vol_breakout") and (features.get("ret_5d") or 0) > 0:
-        score += 5
+        score += 3               # was +5
     # 60 日高位 → 追高风险，扣分（was +4 奖励）
     h60 = features.get("high_60d_pct")
     if h60 is not None:
@@ -238,7 +239,7 @@ def quick_technical_score(features: dict[str, float | None]) -> float:
             score -= 5          # 追高风险
     cvm = features.get("close_vs_ma20")
     if cvm is not None and -5 <= cvm <= 2:
-        score += 2
+        score += 4               # was +2，反转因子加强
     # 缩量上涨 = 诱多（ML 验证 vol_ratio 是前五大特征）
     vol_r = features.get("vol_ratio20")
     if ret20 is not None and vol_r is not None:

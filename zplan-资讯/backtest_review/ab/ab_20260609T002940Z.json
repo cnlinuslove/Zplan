@@ -1,0 +1,112 @@
+{
+  "generated_at": "20260609T002940Z",
+  "variants": {
+    "baseline": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%",
+    "llm_primary": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池",
+    "deep_value": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+  },
+  "test_dates": [
+    "2026-05-21"
+  ],
+  "top_n": 20,
+  "horizon_days": 5,
+  "results": [
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-21",
+      "fail_rate": 1.0,
+      "fail_count": 20,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": 1.21,
+      "median_fwd_return": -2.08,
+      "fwd_positive": 8,
+      "fwd_total": 20,
+      "tag_counts": {
+        "buy_unreachable": 20,
+        "forward_loss": 12,
+        "momentum_chase": 3
+      },
+      "date": "2026-05-21",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-21",
+      "fail_rate": 1.0,
+      "fail_count": 20,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": 1.21,
+      "median_fwd_return": -2.08,
+      "fwd_positive": 8,
+      "fwd_total": 20,
+      "tag_counts": {
+        "buy_unreachable": 20,
+        "forward_loss": 12,
+        "momentum_chase": 3
+      },
+      "date": "2026-05-21",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-21",
+      "fail_rate": 1.0,
+      "fail_count": 20,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": 1.21,
+      "median_fwd_return": -2.08,
+      "fwd_positive": 8,
+      "fwd_total": 20,
+      "tag_counts": {
+        "buy_unreachable": 20,
+        "forward_loss": 12,
+        "momentum_chase": 3
+      },
+      "date": "2026-05-21",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    }
+  ],
+  "comparison": {
+    "by_variant": [
+      {
+        "variant": "baseline",
+        "mean_fail_rate": 1.0,
+        "mean_fwd_return": 1.21,
+        "mean_fwd_positive_ratio": 8.0,
+        "total_runs": 1
+      },
+      {
+        "variant": "deep_value",
+        "mean_fail_rate": 1.0,
+        "mean_fwd_return": 1.21,
+        "mean_fwd_positive_ratio": 8.0,
+        "total_runs": 1
+      },
+      {
+        "variant": "llm_primary",
+        "mean_fail_rate": 1.0,
+        "mean_fwd_return": 1.21,
+        "mean_fwd_positive_ratio": 8.0,
+        "total_runs": 1
+      }
+    ],
+    "best_variant": "baseline",
+    "best_mean_fwd_return": 1.21,
+    "best_mean_fail_rate": 1.0,
+    "win_counts": {
+      "baseline": 1,
+      "llm_primary": 0,
+      "deep_value": 0
+    },
+    "total_dates": 1
+  }
+}

@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> None:
     p_init = sub.add_parser("init-rule", help="全市场规则分写入 stock_rule_scores")
     p_init.add_argument("--skip-health-check", action="store_true")
     p_init.add_argument("--as-of", type=str, default=None, help="指定截面日期 YYYY-MM-DD（默认最新）")
-    p_init.add_argument("--v2", action="store_true", help="使用 v2 评分（反转+资金流+概念热度）替代默认动量评分")
+    p_init.add_argument("--v1", action="store_true", help="使用 v1 评分（纯动量，旧版默认）替代 v2 反转+资金流+概念热度")
     p_init.add_argument("--strategy", type=str, default=None)
 
     p_llm = sub.add_parser("llm-top", help="规则分 Top N → 深度规则 + LLM 简评入库")
@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> None:
             result = build_rule_scores_universe(
                 strategy=strat,
                 skip_health_check=args.skip_health_check,
-                use_v2=getattr(args, "v2", False),
+                use_v2=not getattr(args, "v1", False),
                 as_of=as_of,
             )
             if not result.get("ok"):
@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> None:
             init_r = build_rule_scores_universe(
                 strategy=strat,
                 skip_health_check=args.skip_health_check,
-                use_v2=getattr(args, "v2", False),
+                use_v2=not getattr(args, "v1", False),
             )
             if not init_r.get("ok"):
                 print(init_r.get("message", "init-rule 失败"), file=sys.stderr)

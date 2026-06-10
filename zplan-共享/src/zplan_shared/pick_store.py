@@ -39,6 +39,23 @@ def _price_fields_from_pick(p: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _exit_plan_json_from_pick(p: dict[str, Any]) -> str | None:
+    """从 pick 字典提取 exit_plan JSON 字符串。"""
+    llm_brief = p.get("llm_brief") or {}
+    llm_block = p.get("llm") if isinstance(p.get("llm"), dict) else {}
+    ep = llm_block.get("exit_plan")
+    if ep and isinstance(ep, dict) and ep.get("recommended_plan"):
+        return _dumps(ep)
+    # 从 brief 构建简化版 exit_plan
+    brief_plan = llm_brief.get("recommended_exit_plan")
+    if brief_plan:
+        return _dumps({
+            "recommended_plan": brief_plan,
+            "reasoning": llm_brief.get("exit_reasoning", ""),
+        })
+    return None
+
+
 def _entry_from_pick(p: dict[str, Any], *, rank: int | None = None) -> dict[str, Any]:
     llm_brief = p.get("llm_brief") or {}
     llm_block = p.get("llm") if isinstance(p.get("llm"), dict) else {}
@@ -68,6 +85,10 @@ def _entry_from_pick(p: dict[str, Any], *, rank: int | None = None) -> dict[str,
             }
         ),
         **_price_fields_from_pick(p),
+        "exit_plan_source": "llm" if (llm_brief.get("recommended_exit_plan") or llm_block.get("exit_plan")) else None,
+        "exit_plan_key": llm_brief.get("recommended_exit_plan") or (llm_block.get("exit_plan") or {}).get("recommended_plan"),
+        "exit_plan_json": _exit_plan_json_from_pick(p),
+        "llm_exit_reasoning": llm_brief.get("exit_reasoning") or (llm_block.get("exit_plan") or {}).get("reasoning"),
     }
 
 
@@ -114,6 +135,10 @@ def _entry_from_report(report: dict[str, Any]) -> dict[str, Any]:
             }
         ),
         "report_json": _dumps(report),
+    "exit_plan_source": "llm" if (llm.get("exit_plan") or {}).get("recommended_plan") else None,
+    "exit_plan_key": (llm.get("exit_plan") or {}).get("recommended_plan"),
+    "exit_plan_json": _dumps(llm["exit_plan"]) if llm.get("exit_plan") else None,
+    "llm_exit_reasoning": (llm.get("exit_plan") or {}).get("reasoning"),
     }
 
 

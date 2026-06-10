@@ -254,6 +254,19 @@ class ReportPDF(FPDF):
             for o in (opps if isinstance(opps, list) else [opps])[:3]:
                 self._p(f"• {o}", size=8, color=CLR_GREEN)
 
+    def page_macd_chart(self, chart_macd_path: str) -> None:
+        """MACD + 相似形态画廊图（图片嵌入，与 page_chart 风格一致）。"""
+        if not chart_macd_path or not os.path.exists(chart_macd_path):
+            return
+
+        img_h = CW * 0.65  # MACD 图通常比 K 线图稍矮
+        if self._space_left() < img_h:
+            self.add_page()
+
+        self._hdr("MACD 趋势 + 相似历史形态")
+        self.image(chart_macd_path, x=MARGIN, w=CW)
+        self.ln(4)
+
     def page_similar(self, similar: dict[str, Any] | None) -> None:
         if not similar or not similar.get("matches"):
             return
@@ -267,7 +280,7 @@ class ReportPDF(FPDF):
 
         self._need(20)
         vc = CLR_GREEN if sim_v == "偏多" else (CLR_RED if sim_v == "偏空" else CLR_ORANGE)
-        self._hdr(f"历史相似形态: {win}/{total} 上涨, 平均 {avg:+.1f}% — {sim_v}", vc)
+        self._hdr(f"历史相似形态详情: {win}/{total} 上涨, 平均 {avg:+.1f}% — {sim_v}", vc)
 
         # mini table — 只占少量空间
         self._need(6 * len(matches) + 10)
@@ -345,6 +358,7 @@ def generate_pdf_report(
     report: dict[str, Any] | None = None,
     llm_brief: dict[str, Any] | None = None,
     chart_path: str | None = None,
+    chart_macd_path: str | None = None,
     price_levels: dict[str, float | None] | None = None,
     similar_patterns: dict[str, Any] | None = None,
     risk_flags: list[str] | None = None,
@@ -393,6 +407,8 @@ def generate_pdf_report(
     # 后续内容自动分页
     pdf.page_llm(report, llm_brief)
     pdf.page_risks(report, risk_flags)
+    # MACD + 相似形态画廊图（优先图表，辅助文字详情在后）
+    pdf.page_macd_chart(chart_macd_path or "")
     pdf.page_similar(similar_patterns)
     pdf.page_recommendation(report, verdict)
 
@@ -412,7 +428,8 @@ def generate_pdf_report(
         output_dir = os.path.join(ZPLAN_ROOT, "reports")
     os.makedirs(output_dir, exist_ok=True)
     as_of_str = as_of.replace("-", "")[:8]
-    fname = f"{ts_code}_{as_of_str}.pdf"
+    safe_name = "".join(c for c in name if c not in r'\/:*?"<>|').strip()
+    fname = f"{ts_code}_{safe_name}_{as_of_str}.pdf"
     output_path = os.path.join(output_dir, fname)
 
     pdf.output(output_path)

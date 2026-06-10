@@ -146,7 +146,7 @@ export default function StockDetailPage() {
 
       {/* 技术趋势图——默认展示 */}
       <Card
-        title="📈 技术趋势图 (K线 + MACD + 均线 + 信号)"
+        title="📈 技术趋势图 (K线 + 均线 + 信号)"
         style={{ marginBottom: 16 }}
         extra={
           <Button size="small" onClick={() => setShowChart(!showChart)}>
@@ -163,6 +163,31 @@ export default function StockDetailPage() {
             placeholder={
               <div style={{ padding: 60, textAlign: 'center', color: '#888', background: '#0d0d0d', minHeight: 200 }}>
                 <Spin /> <span style={{ marginLeft: 12 }}>趋势图生成中...</span>
+              </div>
+            }
+          />
+        )}
+      </Card>
+
+      {/* MACD + 相似历史形态画廊 */}
+      <Card
+        title="🔍 MACD 趋势 + 相似历史形态"
+        style={{ marginBottom: 16 }}
+        extra={
+          <Button size="small" onClick={() => setShowChart(!showChart)}>
+            {showChart ? '收起' : '展开'}
+          </Button>
+        }
+      >
+        {showChart && (
+          <Image
+            src={`/api/v1/market/stocks/${tsCode}/chart-macd?lookback=120`}
+            alt="MACD与相似形态"
+            style={{ width: '100%', maxHeight: 700, objectFit: 'contain', background: '#0d0d0d', minHeight: 200 }}
+            preview={{ mask: '点击放大' }}
+            placeholder={
+              <div style={{ padding: 60, textAlign: 'center', color: '#888', background: '#0d0d0d', minHeight: 200 }}>
+                <Spin /> <span style={{ marginLeft: 12 }}>MACD 图生成中...</span>
               </div>
             }
           />

@@ -7,6 +7,8 @@ import {
   StarOutlined,
   AreaChartOutlined,
   DashboardOutlined,
+  ThunderboltOutlined,
+  CompassOutlined,
 } from '@ant-design/icons'
 
 const { Sider, Content } = Layout
@@ -14,9 +16,11 @@ const { Sider, Content } = Layout
 const menuItems = [
   { key: '/', icon: <MessageOutlined />, label: '对话' },
   { key: '/picks', icon: <OrderedListOutlined />, label: '选股榜单' },
+  { key: '/forecast', icon: <CompassOutlined />, label: '大盘预测' },
   { key: '/watchlist', icon: <StarOutlined />, label: '自选股' },
   { key: '/market', icon: <AreaChartOutlined />, label: '行情/概念' },
   { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
+  { key: '/execution', icon: <ThunderboltOutlined />, label: '执行看板' },
 ]
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {

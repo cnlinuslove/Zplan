@@ -1,0 +1,51 @@
+{
+  "generated_at": "20260608T211546Z",
+  "variants": {
+    "baseline": "（无覆盖，使用默认 strategy.yaml）",
+    "strict": "（无覆盖，使用默认 strategy.yaml）"
+  },
+  "test_dates": [
+    "2026-05-21"
+  ],
+  "top_n": 10,
+  "horizon_days": 5,
+  "results": [
+    {
+      "variant": "baseline",
+      "ok": false,
+      "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+      "step": "llm-top",
+      "date": "2026-05-21",
+      "description": "（无覆盖，使用默认 strategy.yaml）"
+    },
+    {
+      "variant": "strict",
+      "ok": false,
+      "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+      "step": "llm-top",
+      "date": "2026-05-21",
+      "description": "（无覆盖，使用默认 strategy.yaml）"
+    }
+  ],
+  "comparison": {
+    "error": "所有变体均失败",
+    "details": [
+      {
+        "variant": "baseline",
+        "ok": false,
+        "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+        "step": "llm-top",
+        "date": "2026-05-21",
+        "description": "（无覆盖，使用默认 strategy.yaml）"
+      },
+      {
+        "variant": "strict",
+        "ok": false,
+        "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+        "step": "llm-top",
+        "date": "2026-05-21",
+        "description": "（无覆盖，使用默认 strategy.yaml）"
+      }
+    ]
+  }
+}

@@ -84,12 +84,16 @@ def _apply_feature_filters(
     feat_df: pd.DataFrame,
     strategy: PickStrategy,
 ) -> pd.DataFrame:
-    """基于特征列的后过滤（如 max_ret_20d）。"""
+    """基于特征列的后过滤（如 max_ret_20d、max_high_60d_pct）。"""
     f = strategy.filters
     max_r20 = f.get("max_ret_20d")
     if max_r20 is not None and "ret_20d" in feat_df.columns:
         r20 = pd.to_numeric(feat_df["ret_20d"], errors="coerce")
         feat_df = feat_df[r20.isna() | (r20 <= float(max_r20))]
+    max_h60 = f.get("max_high_60d_pct")
+    if max_h60 is not None and "high_60d_pct" in feat_df.columns:
+        h60 = pd.to_numeric(feat_df["high_60d_pct"], errors="coerce")
+        feat_df = feat_df[h60.isna() | (h60 <= float(max_h60))]
     return feat_df
 
 

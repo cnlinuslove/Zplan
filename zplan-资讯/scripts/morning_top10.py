@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import date, datetime, timezone, timedelta
@@ -38,7 +39,7 @@ def _top10_from_pick_run(session) -> tuple[list[dict[str, Any]], PickRun | None]
     """从最新 PickRun 取 TOP10 entries。"""
     run = session.execute(
         select(PickRun)
-        .where(PickRun.run_kind.in_(["scan", "llm_top300"]))
+        .where(PickRun.run_kind == "llm_top300")
         .order_by(desc(PickRun.created_at_utc))
         .limit(1)
     ).scalars().first()

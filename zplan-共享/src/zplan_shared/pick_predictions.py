@@ -202,6 +202,8 @@ def evaluate_outcome(
     buy_gap_pct = round((min_low - buy) / buy * 100, 4)
     ret_buy = round((close_end - buy) / buy * 100, 4) if buy_touched else None
     ret_close = round((close_end - close_at_as_of) / close_at_as_of * 100, 4)
+    peak_return_pct = round((max_high - close_at_as_of) / close_at_as_of * 100, 4)
+    max_drawdown_pct = round((min_low - close_at_as_of) / close_at_as_of * 100, 4)
 
     status = "complete" if len(forward) >= horizon_days else "partial"
 
@@ -219,6 +221,8 @@ def evaluate_outcome(
         "buy_gap_pct": buy_gap_pct,
         "return_from_buy_pct": ret_buy,
         "return_from_close_pct": ret_close,
+        "peak_return_pct": peak_return_pct,
+        "max_drawdown_pct": max_drawdown_pct,
         "horizon_start": str(forward.index[0].date()),
         "horizon_end": str(forward.index[-1].date()),
         "bars_in_horizon": len(forward),
@@ -351,11 +355,27 @@ def list_outcomes(
                 "status": oc.status,
                 "as_of_date": str(oc.as_of_date) if oc.as_of_date else None,
                 "predicted_buy_price": oc.predicted_buy_price,
+                "close_at_as_of": oc.close_at_as_of,
+                "close_at_horizon": oc.close_at_horizon,
+                "horizon_start": str(oc.horizon_start) if oc.horizon_start else None,
+                "horizon_end": str(oc.horizon_end) if oc.horizon_end else None,
                 "min_low": oc.min_low,
+                "max_high": oc.max_high,
                 "buy_touched": oc.buy_touched,
                 "buy_gap_pct": oc.buy_gap_pct,
                 "return_from_buy_pct": oc.return_from_buy_pct,
                 "return_from_close_pct": oc.return_from_close_pct,
+                # 从已有数据计算峰值收益和最大回撤
+                "peak_return_pct": (
+                    round((float(oc.max_high) - float(oc.close_at_as_of)) / float(oc.close_at_as_of) * 100, 4)
+                    if oc.max_high is not None and oc.close_at_as_of is not None and oc.close_at_as_of != 0
+                    else None
+                ),
+                "max_drawdown_pct": (
+                    round((float(oc.min_low) - float(oc.close_at_as_of)) / float(oc.close_at_as_of) * 100, 4)
+                    if oc.min_low is not None and oc.close_at_as_of is not None and oc.close_at_as_of != 0
+                    else None
+                ),
                 "target_hit": oc.target_hit,
                 "stop_hit": oc.stop_hit,
                 "price_source": entry.price_source,

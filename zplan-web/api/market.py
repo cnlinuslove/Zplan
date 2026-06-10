@@ -208,11 +208,47 @@ async def get_stock_chart(
             return StreamingResponse(open(cache_path, "rb"), media_type="image/png")
 
         _t0 = _time.monotonic()
-        path = plot_stock_chart(code, lookback=lookback, output_dir=str(output_dir))
+        paths = plot_stock_chart(code, lookback=lookback, output_dir=str(output_dir))
+        path = paths["kline"] if isinstance(paths, dict) else paths
         logger.info("Chart generated for %s in %.1fs", code, _time.monotonic() - _t0)
         return StreamingResponse(open(path, "rb"), media_type="image/png")
     except Exception as exc:
         logger.exception("Chart generation failed for %s", ts_code)
+        return {"ok": False, "error": str(exc)}
+
+
+@router.get("/market/stocks/{ts_code}/chart-macd")
+async def get_stock_chart_macd(
+    ts_code: str,
+    lookback: int = 120,
+    market: str = "a",
+):
+    """生成个股 MACD + 相似历史形态画廊图（PNG，生成后缓存复用）。"""
+    try:
+        from zplan_shared.chart_viz import plot_stock_chart
+        import time as _time
+
+        code = resolve_ts_code(ts_code) or ts_code
+        output_dir = Path("/tmp/zplan-charts")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 缓存：当天已生成过就直接返回
+        today = date.today().strftime("%Y%m%d")
+        cache_path = output_dir / f"{code}_{today}_macd.png"
+        if cache_path.exists():
+            return StreamingResponse(open(cache_path, "rb"), media_type="image/png")
+
+        _t0 = _time.monotonic()
+        paths = plot_stock_chart(code, lookback=lookback, output_dir=str(output_dir))
+        macd_path = paths["macd"] if isinstance(paths, dict) else None
+        if macd_path and Path(macd_path).exists():
+            logger.info("MACD chart generated for %s in %.1fs", code, _time.monotonic() - _t0)
+            return StreamingResponse(open(macd_path, "rb"), media_type="image/png")
+        # fallback to kline chart if macd not available
+        path = paths["kline"] if isinstance(paths, dict) else paths
+        return StreamingResponse(open(path, "rb"), media_type="image/png")
+    except Exception as exc:
+        logger.exception("MACD chart generation failed for %s", ts_code)
         return {"ok": False, "error": str(exc)}
 
 

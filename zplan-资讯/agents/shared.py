@@ -14,6 +14,7 @@ from zplan_shared.models import StockList
 
 # 6 位股票代码（0/3/6/8 开头）
 _CODE_RE = re.compile(r"(?<![0-9])([0368]\d{5})(?:\.(?:SH|SZ|BJ))?(?![0-9])")
+_QUESTION_RE = re.compile(r"(怎么|如何|为什么|为何|什么|哪|吗|？|\?|最近|会不会|能不能|多少|是否|展望|影响)")
 
 # 简称匹配黑名单（媒体/平台，容易误匹配）
 _NAME_BLOCKLIST = frozenset({
@@ -21,6 +22,34 @@ _NAME_BLOCKLIST = frozenset({
     "第一财经", "证券之星", "南方财经", "新浪财经", "雪球",
     "金融界", "和讯", "财新", "澎湃", "每经", "中证网",
     "机器人",
+})
+
+# 股票名通用后缀/片段（2字组合），避免误匹配
+# 这些二字组合出现在大量股票名中，不具备辨识度
+_GENERIC_BIGRAMS = frozenset({
+    "股份", "科技", "集团", "有限", "控股", "实业",
+    "电子", "医药", "能源", "材料", "生物", "电气",
+    "智能", "医疗", "汽车", "信息", "通讯", "环境",
+    "资源", "机械", "食品", "传媒", "建设", "地产",
+    "交通", "化工", "电力", "设备", "技术", "工程",
+    "软件", "网络", "数据", "银行", "证券", "保险",
+    "物流", "航空", "钢铁", "有色", "建材", "家电",
+    "纺织", "服装", "农业", "旅游", "酒店", "餐饮",
+    "环保", "水务", "燃气", "港口", "高速", "铁路",
+    "矿业", "石油", "石化", "玻璃", "陶瓷", "造纸",
+    "包装", "印刷", "塑料", "橡胶", "化纤", "仪器",
+    "仪表", "光电", "光学", "半导体", "集成", "电路",
+    "通信", "计算机", "互联网", "新材", "重工", "装备",
+    "制造", "服务", "发展", "投资", "开发", "经营",
+    "管理", "咨询", "设计", "检测", "认证", "租赁",
+    "医药", "制药", "医疗", "健康", "生物", "基因",
+    "芯片", "半导体", "新能源", "光伏", "锂电", "储能",
+    "机器人", "人工", "智能", "大数据", "云计算",
+    "消费", "零售", "餐饮", "教育", "娱乐", "传媒",
+    "地产", "物业", "基建", "水泥", "钢铁", "煤炭",
+    "航运", "物流", "快递", "电商", "支付", "金融",
+    "基金", "信托", "期货", "外汇", "黄金", "白银",
+    "信息", "软件", "硬件", "系统", "平台", "网络",
 })
 
 _stock_names_cache: dict[str, str] | None = None
@@ -74,16 +103,44 @@ def find_stocks_in_text(text: str) -> list[tuple[str, str]]:
         if nm in text and code not in found:
             found[code] = nm
 
-    # Tier 3: 2 字滑动窗口 → 子串匹配长名称
+    # Tier 3: 滑动窗口匹配，短输入激进/长句保守
     if not found:
         cjk_chars = re.findall(r"[一-鿿]", text)
-        for i in range(len(cjk_chars) - 1):
-            frag = cjk_chars[i] + cjk_chars[i + 1]
-            if frag in _NAME_BLOCKLIST:
-                continue
-            for nm, code in names.items():
-                if len(nm) >= 3 and frag in nm and code not in found:
-                    found[code] = nm
-                    break
+        cjk_only = "".join(cjk_chars)
+        is_short = len(cjk_only) <= 4 and not _QUESTION_RE.search(text)
+
+        if is_short:
+            # 短输入：用户大概率在说股票名 → 2/3字子串匹配（优先开头匹配）
+            for i in range(len(cjk_chars) - 1):
+                frag2 = cjk_chars[i] + cjk_chars[i + 1]
+                if frag2 in _GENERIC_BIGRAMS:
+                    continue
+                # 先找开头匹配的（更可能是用户意图）
+                for nm, code in names.items():
+                    if len(nm) >= 3 and nm.startswith(frag2) and code not in found:
+                        found[code] = nm
+                # 没找到开头匹配的 → 子串兜底（必须精确唯一匹配）
+                if not found:
+                    sub_matches = [
+                        (code, nm) for nm, code in names.items()
+                        if len(nm) >= 4 and frag2 in nm
+                    ]
+                    if len(sub_matches) == 1:
+                        found[sub_matches[0][0]] = sub_matches[0][1]
+            # 也试 3 字
+            for i in range(len(cjk_chars) - 2):
+                frag3 = cjk_chars[i] + cjk_chars[i + 1] + cjk_chars[i + 2]
+                for nm, code in names.items():
+                    if len(nm) >= 4 and nm.startswith(frag3) and code not in found:
+                        found[code] = nm
+                        break
+        else:
+            # 长句：仅 3 字片段 + 必须匹配开头（高精度）
+            for i in range(len(cjk_chars) - 2):
+                frag3 = cjk_chars[i] + cjk_chars[i + 1] + cjk_chars[i + 2]
+                for nm, code in names.items():
+                    if len(nm) >= 4 and nm.startswith(frag3) and code not in found:
+                        found[code] = nm
+                        break
 
     return [(code, name) for code, name in found.items()]

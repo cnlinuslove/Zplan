@@ -1,0 +1,334 @@
+{
+  "ok": true,
+  "run_id": 142,
+  "run_kind": "llm_top300",
+  "trade_date_as_of": "2026-06-08",
+  "top_n": 10,
+  "horizon_days": 5,
+  "summary": {
+    "total": 10,
+    "fail": 3,
+    "pass": 3,
+    "pending": 4,
+    "fail_rate": 0.3
+  },
+  "tag_counts": {
+    "near_60d_high": 3,
+    "forward_loss": 1,
+    "no_forward_data": 4
+  },
+  "entries": [
+    {
+      "entry_id": 2231,
+      "run_id": 142,
+      "rank": 1,
+      "ts_code": "002132",
+      "name": "恒星科技",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 72.8,
+      "rule_score": 75.8,
+      "score_delta": -3.0,
+      "ret_20d_at_pick": 2.847,
+      "high_60d_pct": 90.7378,
+      "close_vs_buy_gap_pct": 0.5025,
+      "return_from_close_pct": -1.3841,
+      "forward_status": "partial",
+      "failure_tags": [
+        "near_60d_high",
+        "forward_loss"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点",
+        "forward_loss": "验证期内收盘收益为负"
+      },
+      "llm_trend": "20日涨2.85%，量比1.41，KDJ金叉，但60日高位90.7%有追高风险，光伏题材活跃。",
+      "recommendation": "关注",
+      "predicted_buy": 5.7511,
+      "close_at_pick": 5.78
+    },
+    {
+      "entry_id": 2232,
+      "run_id": 142,
+      "rank": 2,
+      "ts_code": "002522",
+      "name": "浙江众成",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 69.8,
+      "rule_score": 72.8,
+      "score_delta": -3.0,
+      "ret_20d_at_pick": 1.5647,
+      "high_60d_pct": 91.3043,
+      "close_vs_buy_gap_pct": 0.5025,
+      "return_from_close_pct": 1.9608,
+      "forward_status": "partial",
+      "failure_tags": [
+        "near_60d_high"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点"
+      },
+      "llm_trend": "20日涨1.56%，量比1.06，KDJ上行，60日高位91.3%，注意追高风险。",
+      "recommendation": "关注",
+      "predicted_buy": 7.1043,
+      "close_at_pick": 7.14
+    },
+    {
+      "entry_id": 2233,
+      "run_id": 142,
+      "rank": 3,
+      "ts_code": "600345",
+      "name": "长江通信",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "pending",
+      "llm_score": 69.7,
+      "rule_score": 69.7,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": -7.7109,
+      "high_60d_pct": 86.738,
+      "close_vs_buy_gap_pct": 0.5025,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "20日跌7.71%，量比1.08，KDJ低位，60日高位86.7%，回撤中观望。",
+      "recommendation": "观望",
+      "predicted_buy": 53.2325,
+      "close_at_pick": 53.5
+    },
+    {
+      "entry_id": 2234,
+      "run_id": 142,
+      "rank": 4,
+      "ts_code": "300223",
+      "name": "北京君正",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "pass",
+      "llm_score": 68.1,
+      "rule_score": 68.1,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": 2.2889,
+      "high_60d_pct": 84.8165,
+      "close_vs_buy_gap_pct": 0.5025,
+      "return_from_close_pct": 7.1218,
+      "forward_status": "partial",
+      "failure_tags": [],
+      "failure_labels": {},
+      "llm_trend": "20日涨2.29%，量比1.34，KDJ低位，60日高位84.8%，趋势健康。",
+      "recommendation": "关注",
+      "predicted_buy": 148.5137,
+      "close_at_pick": 149.26
+    },
+    {
+      "entry_id": 2235,
+      "run_id": 142,
+      "rank": 5,
+      "ts_code": "603328",
+      "name": "依顿电子",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "pending",
+      "llm_score": 67.6,
+      "rule_score": 67.6,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": 1.4041,
+      "high_60d_pct": 88.3152,
+      "close_vs_buy_gap_pct": 0.5025,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "20日涨1.4%，量比1.25放量，KDJ未超买，60日高位88.3%，均线多头，风险较低。",
+      "recommendation": "关注",
+      "predicted_buy": 12.935,
+      "close_at_pick": 13.0
+    },
+    {
+      "entry_id": 2236,
+      "run_id": 142,
+      "rank": 6,
+      "ts_code": "000831",
+      "name": "中国稀土",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "pass",
+      "llm_score": 67.1,
+      "rule_score": 67.1,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": -11.0404,
+      "high_60d_pct": 87.678,
+      "close_vs_buy_gap_pct": 0.5026,
+      "return_from_close_pct": 7.3265,
+      "forward_status": "partial",
+      "failure_tags": [],
+      "failure_labels": {},
+      "llm_trend": "20日跌11%，量比1.27放量，KDJ低位，60日高位87.7%，均线多头，回踩低吸机会。",
+      "recommendation": "关注",
+      "predicted_buy": 51.4713,
+      "close_at_pick": 51.73
+    },
+    {
+      "entry_id": 2237,
+      "run_id": 142,
+      "rank": 7,
+      "ts_code": "920077",
+      "name": "吉林碳谷",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "pending",
+      "llm_score": 67.1,
+      "rule_score": 67.1,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": -11.2025,
+      "high_60d_pct": 76.8,
+      "close_vs_buy_gap_pct": 0.5025,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "20日跌11.2%，量比1.4放量，KDJ低位，60日高位76.8%，均线多头，深度回调低吸。",
+      "recommendation": "关注",
+      "predicted_buy": 17.1936,
+      "close_at_pick": 17.28
+    },
+    {
+      "entry_id": 2238,
+      "run_id": 142,
+      "rank": 8,
+      "ts_code": "300121",
+      "name": "阳谷华泰",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "pass",
+      "llm_score": 67.1,
+      "rule_score": 67.1,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": 1.5873,
+      "high_60d_pct": 83.0629,
+      "close_vs_buy_gap_pct": 0.5025,
+      "return_from_close_pct": 3.8281,
+      "forward_status": "partial",
+      "failure_tags": [],
+      "failure_labels": {},
+      "llm_trend": "20日涨1.6%，量比1.31放量，KDJ中性，60日高位83.1%，均线多头，走势健康。",
+      "recommendation": "关注",
+      "predicted_buy": 12.736,
+      "close_at_pick": 12.8
+    },
+    {
+      "entry_id": 2239,
+      "run_id": 142,
+      "rank": 9,
+      "ts_code": "688268",
+      "name": "华特气体",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "pending",
+      "llm_score": 66.5,
+      "rule_score": 66.5,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": -0.6406,
+      "high_60d_pct": 85.8967,
+      "close_vs_buy_gap_pct": 0.5025,
+      "return_from_close_pct": null,
+      "forward_status": "pending",
+      "failure_tags": [
+        "no_forward_data"
+      ],
+      "failure_labels": {
+        "no_forward_data": "尚无足够后续 K 线"
+      },
+      "llm_trend": "20日微跌0.6%，量比1.03，KDJ中性，60日高位85.9%，均线多头，横盘整理。",
+      "recommendation": "关注",
+      "predicted_buy": 182.1049,
+      "close_at_pick": 183.02
+    },
+    {
+      "entry_id": 2240,
+      "run_id": 142,
+      "rank": 10,
+      "ts_code": "300252",
+      "name": "金信诺",
+      "as_of_date": "2026-06-08",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 66.2,
+      "rule_score": 69.2,
+      "score_delta": -3.0,
+      "ret_20d_at_pick": -2.0,
+      "high_60d_pct": 90.3857,
+      "close_vs_buy_gap_pct": 0.5022,
+      "return_from_close_pct": 2.9066,
+      "forward_status": "partial",
+      "failure_tags": [
+        "near_60d_high"
+      ],
+      "failure_labels": {
+        "near_60d_high": "接近60日阶段高点"
+      },
+      "llm_trend": "20日跌2%，量比1.28，KDJ中性，60日高位90.4%，注意追高风险。",
+      "recommendation": "观望",
+      "predicted_buy": 16.0892,
+      "close_at_pick": 16.17
+    }
+  ],
+  "optimization": {
+    "where_to_change": {
+      "prompt": [
+        "简评 prompt：high_60d_pct>0.9 时须提示「接近阶段高点」，降分或观望"
+      ],
+      "strategy_yaml": [],
+      "rule_engine_code": [
+        "technical：high_60d_pct>0.90 时 rule_score -= 8"
+      ]
+    },
+    "priority": [
+      [
+        "no_forward_data",
+        4
+      ],
+      [
+        "near_60d_high",
+        3
+      ],
+      [
+        "forward_loss",
+        1
+      ]
+    ],
+    "review_actions": [
+      {
+        "id": "1",
+        "layer": "strategy",
+        "file": "zplan-选股/config/strategy.yaml → ranking",
+        "action": "确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight",
+        "why": "最终 Top 应由 LLM 分排序，规则只做候选池与约束"
+      },
+      {
+        "id": "2",
+        "layer": "workflow",
+        "file": "重跑 llm-top → llm-eval",
+        "action": "改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate",
+        "why": "旧 run 不会自动应用新 prompt"
+      }
+    ]
+  },
+  "markdown": "# LLM Top10 回测诊断（run_id=142，as_of=2026-06-08）\n\n- 样本：**10** | 失败 **3** | 通过 **3** | 待验证 **4**\n- 失败率：**30%**\n\n## 失败标签统计\n- `no_forward_data`（尚无足够后续 K 线）：**4** 次\n- `near_60d_high`（接近60日阶段高点）：**3** 次\n- `forward_loss`（验证期内收盘收益为负）：**1** 次\n\n## 逐只明细\n- **#1 恒星科技 (002132)** verdict=fail | LLM 72.8 vs 规则 75.8 | 现价¥5.78 建议买¥5.75\n  - ret20=2.847% | 60日高位=90.7% | 收盘/买价 gap=0.5025% | fwd=-1.3841%\n  - 推荐：关注 | 标签：near_60d_high, forward_loss\n  - LLM：20日涨2.85%，量比1.41，KDJ金叉，但60日高位90.7%有追高风险，光伏题材活跃。\n- **#2 浙江众成 (002522)** verdict=fail | LLM 69.8 vs 规则 72.8 | 现价¥7.14 建议买¥7.10\n  - ret20=1.5647% | 60日高位=91.3% | 收盘/买价 gap=0.5025% | fwd=1.9608%\n  - 推荐：关注 | 标签：near_60d_high\n  - LLM：20日涨1.56%，量比1.06，KDJ上行，60日高位91.3%，注意追高风险。\n- **#3 长江通信 (600345)** verdict=pending | LLM 69.7 vs 规则 69.7 | 现价¥53.50 建议买¥53.23\n  - ret20=-7.7109% | 60日高位=86.7% | 收盘/买价 gap=0.5025% | fwd=None%\n  - 推荐：观望 | 标签：no_forward_data\n  - LLM：20日跌7.71%，量比1.08，KDJ低位，60日高位86.7%，回撤中观望。\n- **#4 北京君正 (300223)** verdict=pass | LLM 68.1 vs 规则 68.1 | 现价¥149.26 建议买¥148.51\n  - ret20=2.2889% | 60日高位=84.8% | 收盘/买价 gap=0.5025% | fwd=7.1218%\n  - 推荐：关注 | 标签：—\n  - LLM：20日涨2.29%，量比1.34，KDJ低位，60日高位84.8%，趋势健康。\n- **#5 依顿电子 (603328)** verdict=pending | LLM 67.6 vs 规则 67.6 | 现价¥13.00 建议买¥12.94\n  - ret20=1.4041% | 60日高位=88.3% | 收盘/买价 gap=0.5025% | fwd=None%\n  - 推荐：关注 | 标签：no_forward_data\n  - LLM：20日涨1.4%，量比1.25放量，KDJ未超买，60日高位88.3%，均线多头，风险较低。\n- **#6 中国稀土 (000831)** verdict=pass | LLM 67.1 vs 规则 67.1 | 现价¥51.73 建议买¥51.47\n  - ret20=-11.0404% | 60日高位=87.7% | 收盘/买价 gap=0.5026% | fwd=7.3265%\n  - 推荐：关注 | 标签：—\n  - LLM：20日跌11%，量比1.27放量，KDJ低位，60日高位87.7%，均线多头，回踩低吸机会。\n- **#7 吉林碳谷 (920077)** verdict=pending | LLM 67.1 vs 规则 67.1 | 现价¥17.28 建议买¥17.19\n  - ret20=-11.2025% | 60日高位=76.8% | 收盘/买价 gap=0.5025% | fwd=None%\n  - 推荐：关注 | 标签：no_forward_data\n  - LLM：20日跌11.2%，量比1.4放量，KDJ低位，60日高位76.8%，均线多头，深度回调低吸。\n- **#8 阳谷华泰 (300121)** verdict=pass | LLM 67.1 vs 规则 67.1 | 现价¥12.80 建议买¥12.74\n  - ret20=1.5873% | 60日高位=83.1% | 收盘/买价 gap=0.5025% | fwd=3.8281%\n  - 推荐：关注 | 标签：—\n  - LLM：20日涨1.6%，量比1.31放量，KDJ中性，60日高位83.1%，均线多头，走势健康。\n- **#9 华特气体 (688268)** verdict=pending | LLM 66.5 vs 规则 66.5 | 现价¥183.02 建议买¥182.10\n  - ret20=-0.6406% | 60日高位=85.9% | 收盘/买价 gap=0.5025% | fwd=None%\n  - 推荐：关注 | 标签：no_forward_data\n  - LLM：20日微跌0.6%，量比1.03，KDJ中性，60日高位85.9%，均线多头，横盘整理。\n- **#10 金信诺 (300252)** verdict=fail | LLM 66.2 vs 规则 69.2 | 现价¥16.17 建议买¥16.09\n  - ret20=-2.0% | 60日高位=90.4% | 收盘/买价 gap=0.5022% | fwd=2.9066%\n  - 推荐：观望 | 标签：near_60d_high\n  - LLM：20日跌2%，量比1.28，KDJ中性，60日高位90.4%，注意追高风险。\n\n## 后续优化（改哪里）\n### 1. Prompt（`llm_research.py` 简评/深度）— **优先**\n- 简评 prompt：high_60d_pct>0.9 时须提示「接近阶段高点」，降分或观望\n### 3. 规则引擎代码（`technical.py` / `scanner.py`）\n- technical：high_60d_pct>0.90 时 rule_score -= 8\n\n## 请你 Review（可勾选后改配置）\n\n| # | 层级 | 文件 | 建议动作 | 原因 |\n|---|------|------|----------|------|\n| 1 | strategy | `zplan-选股/config/strategy.yaml → ranking` | 确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight | 最终 Top 应由 LLM 分排序，规则只做候选池与约束 |\n| 2 | workflow | `重跑 llm-top → llm-eval` | 改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate | 旧 run 不会自动应用新 prompt |\n\n## 设计说明（规则 vs LLM）\n\n- **init-rule**：全市场轻量技术分（`quick_technical_score`），偏动量/多头排列，**不含**财报/资讯。\n- **llm-top deepen**：对 Top300 才算完整规则分（技术+财务+资讯+行业）。\n- **你的目标**：规则只做「候选池 + 硬约束」，**排序与推荐以 LLM 为主**（`strategy.yaml` → `ranking`）。\n- **校正闭环**：改 prompt/权重 → 重跑 llm-top → `llm-eval` → 看 fail_rate 与上表。"
+}

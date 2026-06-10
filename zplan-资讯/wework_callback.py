@@ -36,18 +36,34 @@ def parse_inbound_xml(xml_text: str) -> dict[str, str] | None:
     except ET.ParseError:
         return None
     msg_type = _xml_text(root, "MsgType")
-    if msg_type != "text":
+
+    if msg_type == "text":
+        content = _xml_text(root, "Content")
+        if not content:
+            return None
+        return {
+            "msg_type": msg_type,
+            "content": content,
+            "from_user": _xml_text(root, "FromUserName"),
+            "chat_id": _xml_text(root, "ChatId"),
+            "agent_id": _xml_text(root, "AgentID"),
+        }
+
+    # 模板卡片按钮点击事件
+    if msg_type == "event":
+        event = _xml_text(root, "Event")
+        event_key = _xml_text(root, "EventKey")
+        if event in ("template_card_menu_event", "click", "template_card_event") and event_key:
+            return {
+                "msg_type": "text",
+                "content": f"__btn__{event_key}",
+                "from_user": _xml_text(root, "FromUserName"),
+                "chat_id": _xml_text(root, "ChatId"),
+                "agent_id": _xml_text(root, "AgentID"),
+            }
         return None
-    content = _xml_text(root, "Content")
-    if not content:
-        return None
-    return {
-        "msg_type": msg_type,
-        "content": content,
-        "from_user": _xml_text(root, "FromUserName"),
-        "chat_id": _xml_text(root, "ChatId"),
-        "agent_id": _xml_text(root, "AgentID"),
-    }
+
+    return None
 
 
 def _has_mention(content: str) -> bool:

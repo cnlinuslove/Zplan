@@ -1,0 +1,373 @@
+{
+  "ok": true,
+  "run_id": 26,
+  "run_kind": "llm_top300",
+  "trade_date_as_of": "2026-05-21",
+  "top_n": 10,
+  "horizon_days": 5,
+  "summary": {
+    "total": 10,
+    "fail": 10,
+    "pass": 0,
+    "pending": 0,
+    "fail_rate": 1.0
+  },
+  "tag_counts": {
+    "buy_unreachable": 10,
+    "forward_loss": 7,
+    "momentum_chase": 2
+  },
+  "entries": [
+    {
+      "entry_id": 361,
+      "run_id": 26,
+      "rank": 1,
+      "ts_code": "601939",
+      "name": "建设银行",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 81.3,
+      "rule_score": 81.3,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": 3.2888,
+      "close_vs_buy_gap_pct": 5.9009,
+      "return_from_close_pct": 0.398,
+      "forward_status": "complete",
+      "failure_tags": [
+        "buy_unreachable"
+      ],
+      "failure_labels": {
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交"
+      },
+      "llm_trend": "中特估+银行题材，资讯催化；均线多头排列，MACD转正，涨幅3.3%可控。",
+      "recommendation": "关注",
+      "predicted_buy": 9.49,
+      "close_at_pick": 10.05
+    },
+    {
+      "entry_id": 362,
+      "run_id": 26,
+      "rank": 2,
+      "ts_code": "688553",
+      "name": "汇宇制药",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 79.8,
+      "rule_score": 79.8,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": 6.3402,
+      "close_vs_buy_gap_pct": 27.9777,
+      "return_from_close_pct": -13.2816,
+      "forward_status": "complete",
+      "failure_tags": [
+        "buy_unreachable",
+        "forward_loss"
+      ],
+      "failure_labels": {
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "forward_loss": "验证期内收盘收益为负"
+      },
+      "llm_trend": "创新药+专精特新题材，资讯催化；均线多头排列，MACD转正，但6.3%涨幅需防追高。",
+      "recommendation": "观望",
+      "predicted_buy": 16.12,
+      "close_at_pick": 20.63
+    },
+    {
+      "entry_id": 363,
+      "run_id": 26,
+      "rank": 3,
+      "ts_code": "688796",
+      "name": "百奥赛图",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 79.6,
+      "rule_score": 84.6,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 8.049,
+      "close_vs_buy_gap_pct": 18.5476,
+      "return_from_close_pct": 6.3528,
+      "forward_status": "complete",
+      "failure_tags": [
+        "momentum_chase",
+        "buy_unreachable"
+      ],
+      "failure_labels": {
+        "momentum_chase": "20日涨幅过高仍强推（追高风险）",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交"
+      },
+      "llm_trend": "2025年报预增题材+资讯催化，20日涨幅8.05%，追高风险，均线多头排列，MA5上穿MA20",
+      "recommendation": "观望",
+      "predicted_buy": 89.23,
+      "close_at_pick": 105.78
+    },
+    {
+      "entry_id": 364,
+      "run_id": 26,
+      "rank": 4,
+      "ts_code": "002962",
+      "name": "五方光电",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 79.6,
+      "rule_score": 84.6,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 8.9049,
+      "close_vs_buy_gap_pct": 20.6495,
+      "return_from_close_pct": 0.6094,
+      "forward_status": "complete",
+      "failure_tags": [
+        "momentum_chase",
+        "buy_unreachable"
+      ],
+      "failure_labels": {
+        "momentum_chase": "20日涨幅过高仍强推（追高风险）",
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交"
+      },
+      "llm_trend": "华为+3D摄像头题材，资讯催化，但20日涨幅8.9%偏高，追高风险需警惕。",
+      "recommendation": "观望",
+      "predicted_buy": 16.32,
+      "close_at_pick": 19.69
+    },
+    {
+      "entry_id": 365,
+      "run_id": 26,
+      "rank": 5,
+      "ts_code": "600521",
+      "name": "华海药业",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 79.0,
+      "rule_score": 84.0,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 3.591,
+      "close_vs_buy_gap_pct": 9.5943,
+      "return_from_close_pct": -5.5229,
+      "forward_status": "complete",
+      "failure_tags": [
+        "buy_unreachable",
+        "forward_loss"
+      ],
+      "failure_labels": {
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "forward_loss": "验证期内收盘收益为负"
+      },
+      "llm_trend": "AI制药题材，均线多头排列+KDJ金叉，但涨幅3.6%且close_vs_buy_gap达9.6%，追高风险",
+      "recommendation": "观望",
+      "predicted_buy": 15.53,
+      "close_at_pick": 17.02
+    },
+    {
+      "entry_id": 366,
+      "run_id": 26,
+      "rank": 6,
+      "ts_code": "301255",
+      "name": "通力科技",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 79.0,
+      "rule_score": 84.0,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 6.4431,
+      "close_vs_buy_gap_pct": 16.0573,
+      "return_from_close_pct": -17.7888,
+      "forward_status": "complete",
+      "failure_tags": [
+        "buy_unreachable",
+        "forward_loss"
+      ],
+      "failure_labels": {
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "forward_loss": "验证期内收盘收益为负"
+      },
+      "llm_trend": "减速器题材，6日涨幅6.4%，均线多头排列，KDJ金叉，但追高风险需警惕。",
+      "recommendation": "观望",
+      "predicted_buy": 27.9,
+      "close_at_pick": 32.38
+    },
+    {
+      "entry_id": 367,
+      "run_id": 26,
+      "rank": 7,
+      "ts_code": "688682",
+      "name": "霍莱沃",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 79.0,
+      "rule_score": 76.2,
+      "score_delta": 2.8,
+      "ret_20d_at_pick": -2.7227,
+      "close_vs_buy_gap_pct": 25.718,
+      "return_from_close_pct": -3.2311,
+      "forward_status": "complete",
+      "failure_tags": [
+        "buy_unreachable",
+        "forward_loss"
+      ],
+      "failure_labels": {
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "forward_loss": "验证期内收盘收益为负"
+      },
+      "llm_trend": "商业航天+军工题材，技术面均线多头排列且MA5上穿MA20，20日回撤低吸区，近20日微跌2.7%无追高风险。",
+      "recommendation": "关注",
+      "predicted_buy": 38.65,
+      "close_at_pick": 48.59
+    },
+    {
+      "entry_id": 368,
+      "run_id": 26,
+      "rank": 8,
+      "ts_code": "001225",
+      "name": "和泰机电",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 78.8,
+      "rule_score": 78.8,
+      "score_delta": 0.0,
+      "ret_20d_at_pick": 5.5152,
+      "close_vs_buy_gap_pct": 20.4841,
+      "return_from_close_pct": -4.6317,
+      "forward_status": "complete",
+      "failure_tags": [
+        "buy_unreachable",
+        "forward_loss"
+      ],
+      "failure_labels": {
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "forward_loss": "验证期内收盘收益为负"
+      },
+      "llm_trend": "和泰机电昨日涨停+连板，QFII重仓，一带一路题材，20日涨幅5.5%，MA5上穿MA20，KDJ金叉，放量上涨，追高风险。",
+      "recommendation": "观望",
+      "predicted_buy": 44.62,
+      "close_at_pick": 53.76
+    },
+    {
+      "entry_id": 369,
+      "run_id": 26,
+      "rank": 9,
+      "ts_code": "688271",
+      "name": "联影医疗",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 78.4,
+      "rule_score": 83.4,
+      "score_delta": -5.0,
+      "ret_20d_at_pick": 7.3574,
+      "close_vs_buy_gap_pct": 12.9742,
+      "return_from_close_pct": -0.9246,
+      "forward_status": "complete",
+      "failure_tags": [
+        "buy_unreachable",
+        "forward_loss"
+      ],
+      "failure_labels": {
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "forward_loss": "验证期内收盘收益为负"
+      },
+      "llm_trend": "医疗器械题材，涨幅7.36%偏高，MA5上穿MA20且KDJ金叉，但追高风险需警惕。",
+      "recommendation": "观望",
+      "predicted_buy": 109.14,
+      "close_at_pick": 123.3
+    },
+    {
+      "entry_id": 370,
+      "run_id": 26,
+      "rank": 10,
+      "ts_code": "688007",
+      "name": "光峰科技",
+      "as_of_date": "2026-05-21",
+      "horizon_days": 5,
+      "verdict": "fail",
+      "llm_score": 78.0,
+      "rule_score": 75.6,
+      "score_delta": 2.4,
+      "ret_20d_at_pick": 4.9626,
+      "close_vs_buy_gap_pct": 17.1472,
+      "return_from_close_pct": -4.0803,
+      "forward_status": "complete",
+      "failure_tags": [
+        "buy_unreachable",
+        "forward_loss"
+      ],
+      "failure_labels": {
+        "buy_unreachable": "收盘价远高于建议买价，短期难回踩成交",
+        "forward_loss": "验证期内收盘收益为负"
+      },
+      "llm_trend": "AI眼镜等6题材覆盖，均线多头排列，MACD转正，20日涨幅4.96%未超5%，无追高风险。",
+      "recommendation": "关注",
+      "predicted_buy": 13.18,
+      "close_at_pick": 15.44
+    }
+  ],
+  "optimization": {
+    "where_to_change": {
+      "prompt": [
+        "深度研报 prompt：buy_price 不得高于 close*0.99；须说明与 suggested_buy 关系"
+      ],
+      "strategy_yaml": [
+        "technical.suggested_price_levels：MA20 折扣由 0.98 调至 0.96，或增加「可成交价」字段"
+      ],
+      "rule_engine_code": []
+    },
+    "priority": [
+      [
+        "buy_unreachable",
+        10
+      ],
+      [
+        "forward_loss",
+        7
+      ],
+      [
+        "momentum_chase",
+        2
+      ]
+    ],
+    "review_actions": [
+      {
+        "id": "1",
+        "layer": "strategy",
+        "file": "zplan-选股/config/strategy.yaml → filters.max_ret_20d",
+        "action": "启用或调低 max_ret_20d（如 10），减少过热股进入 Top300",
+        "why": "momentum_chase=2"
+      },
+      {
+        "id": "2",
+        "layer": "strategy",
+        "file": "zplan-选股/config/strategy.yaml → ranking",
+        "action": "试 ranking.mode=blend 且 llm_weight 0.8；或 prompt 要求 close_vs_buy_gap 大时降分",
+        "why": "buy_unreachable=10"
+      },
+      {
+        "id": "3",
+        "layer": "rule_engine",
+        "file": "zplan-共享/src/zplan_shared/features.py → suggested_price_levels",
+        "action": "MA20 折扣 0.98→0.96，或增加 actionable_price≈close 供 LLM 参考",
+        "why": "建议买价系统性低于现价，导致「买不到」"
+      },
+      {
+        "id": "4",
+        "layer": "strategy",
+        "file": "zplan-选股/config/strategy.yaml → ranking",
+        "action": "确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight",
+        "why": "最终 Top 应由 LLM 分排序，规则只做候选池与约束"
+      },
+      {
+        "id": "5",
+        "layer": "workflow",
+        "file": "重跑 llm-top → llm-eval",
+        "action": "改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate",
+        "why": "旧 run 不会自动应用新 prompt"
+      }
+    ]
+  },
+  "markdown": "# LLM Top10 回测诊断（run_id=26，as_of=2026-05-21）\n\n- 样本：**10** | 失败 **10** | 通过 **0** | 待验证 **0**\n- 失败率：**100%**\n\n## 失败标签统计\n- `buy_unreachable`（收盘价远高于建议买价，短期难回踩成交）：**10** 次\n- `forward_loss`（验证期内收盘收益为负）：**7** 次\n- `momentum_chase`（20日涨幅过高仍强推（追高风险））：**2** 次\n\n## 逐只明细\n- **#1 建设银行 (601939)** verdict=fail | LLM 81.3 vs 规则 81.3 | ret20=3.2888% | 收盘/买价 gap=5.9009% | fwd=0.398%\n  - 推荐：关注 | 标签：buy_unreachable\n  - LLM：中特估+银行题材，资讯催化；均线多头排列，MACD转正，涨幅3.3%可控。\n- **#2 汇宇制药 (688553)** verdict=fail | LLM 79.8 vs 规则 79.8 | ret20=6.3402% | 收盘/买价 gap=27.9777% | fwd=-13.2816%\n  - 推荐：观望 | 标签：buy_unreachable, forward_loss\n  - LLM：创新药+专精特新题材，资讯催化；均线多头排列，MACD转正，但6.3%涨幅需防追高。\n- **#3 百奥赛图 (688796)** verdict=fail | LLM 79.6 vs 规则 84.6 | ret20=8.049% | 收盘/买价 gap=18.5476% | fwd=6.3528%\n  - 推荐：观望 | 标签：momentum_chase, buy_unreachable\n  - LLM：2025年报预增题材+资讯催化，20日涨幅8.05%，追高风险，均线多头排列，MA5上穿MA20\n- **#4 五方光电 (002962)** verdict=fail | LLM 79.6 vs 规则 84.6 | ret20=8.9049% | 收盘/买价 gap=20.6495% | fwd=0.6094%\n  - 推荐：观望 | 标签：momentum_chase, buy_unreachable\n  - LLM：华为+3D摄像头题材，资讯催化，但20日涨幅8.9%偏高，追高风险需警惕。\n- **#5 华海药业 (600521)** verdict=fail | LLM 79.0 vs 规则 84.0 | ret20=3.591% | 收盘/买价 gap=9.5943% | fwd=-5.5229%\n  - 推荐：观望 | 标签：buy_unreachable, forward_loss\n  - LLM：AI制药题材，均线多头排列+KDJ金叉，但涨幅3.6%且close_vs_buy_gap达9.6%，追高风险\n- **#6 通力科技 (301255)** verdict=fail | LLM 79.0 vs 规则 84.0 | ret20=6.4431% | 收盘/买价 gap=16.0573% | fwd=-17.7888%\n  - 推荐：观望 | 标签：buy_unreachable, forward_loss\n  - LLM：减速器题材，6日涨幅6.4%，均线多头排列，KDJ金叉，但追高风险需警惕。\n- **#7 霍莱沃 (688682)** verdict=fail | LLM 79.0 vs 规则 76.2 | ret20=-2.7227% | 收盘/买价 gap=25.718% | fwd=-3.2311%\n  - 推荐：关注 | 标签：buy_unreachable, forward_loss\n  - LLM：商业航天+军工题材，技术面均线多头排列且MA5上穿MA20，20日回撤低吸区，近20日微跌2.7%无追高风险。\n- **#8 和泰机电 (001225)** verdict=fail | LLM 78.8 vs 规则 78.8 | ret20=5.5152% | 收盘/买价 gap=20.4841% | fwd=-4.6317%\n  - 推荐：观望 | 标签：buy_unreachable, forward_loss\n  - LLM：和泰机电昨日涨停+连板，QFII重仓，一带一路题材，20日涨幅5.5%，MA5上穿MA20，KDJ金叉，放量上涨，追高风险。\n- **#9 联影医疗 (688271)** verdict=fail | LLM 78.4 vs 规则 83.4 | ret20=7.3574% | 收盘/买价 gap=12.9742% | fwd=-0.9246%\n  - 推荐：观望 | 标签：buy_unreachable, forward_loss\n  - LLM：医疗器械题材，涨幅7.36%偏高，MA5上穿MA20且KDJ金叉，但追高风险需警惕。\n- **#10 光峰科技 (688007)** verdict=fail | LLM 78.0 vs 规则 75.6 | ret20=4.9626% | 收盘/买价 gap=17.1472% | fwd=-4.0803%\n  - 推荐：关注 | 标签：buy_unreachable, forward_loss\n  - LLM：AI眼镜等6题材覆盖，均线多头排列，MACD转正，20日涨幅4.96%未超5%，无追高风险。\n\n## 后续优化（改哪里）\n### 1. Prompt（`llm_research.py` 简评/深度）— **优先**\n- 深度研报 prompt：buy_price 不得高于 close*0.99；须说明与 suggested_buy 关系\n### 2. strategy.yaml（规则过滤，不耗 API）\n- technical.suggested_price_levels：MA20 折扣由 0.98 调至 0.96，或增加「可成交价」字段\n\n## 请你 Review（可勾选后改配置）\n\n| # | 层级 | 文件 | 建议动作 | 原因 |\n|---|------|------|----------|------|\n| 1 | strategy | `zplan-选股/config/strategy.yaml → filters.max_ret_20d` | 启用或调低 max_ret_20d（如 10），减少过热股进入 Top300 | momentum_chase=2 |\n| 2 | strategy | `zplan-选股/config/strategy.yaml → ranking` | 试 ranking.mode=blend 且 llm_weight 0.8；或 prompt 要求 close_vs_buy_gap 大时降分 | buy_unreachable=10 |\n| 3 | rule_engine | `zplan-共享/src/zplan_shared/features.py → suggested_price_levels` | MA20 折扣 0.98→0.96，或增加 actionable_price≈close 供 LLM 参考 | 建议买价系统性低于现价，导致「买不到」 |\n| 4 | strategy | `zplan-选股/config/strategy.yaml → ranking` | 确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight | 最终 Top 应由 LLM 分排序，规则只做候选池与约束 |\n| 5 | workflow | `重跑 llm-top → llm-eval` | 改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate | 旧 run 不会自动应用新 prompt |\n\n## 设计说明（规则 vs LLM）\n\n- **init-rule**：全市场轻量技术分（`quick_technical_score`），偏动量/多头排列，**不含**财报/资讯。\n- **llm-top deepen**：对 Top300 才算完整规则分（技术+财务+资讯+行业）。\n- **你的目标**：规则只做「候选池 + 硬约束」，**排序与推荐以 LLM 为主**（`strategy.yaml` → `ranking`）。\n- **校正闭环**：改 prompt/权重 → 重跑 llm-top → `llm-eval` → 看 fail_rate 与上表。"
+}

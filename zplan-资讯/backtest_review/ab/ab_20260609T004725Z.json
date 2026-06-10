@@ -1,0 +1,521 @@
+{
+  "generated_at": "20260609T004725Z",
+  "variants": {
+    "baseline": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%",
+    "llm_primary": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池",
+    "deep_value": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+  },
+  "test_dates": [
+    "2026-04-03",
+    "2026-04-10",
+    "2026-04-17",
+    "2026-04-24",
+    "2026-05-01",
+    "2026-05-08",
+    "2026-05-15",
+    "2026-05-22"
+  ],
+  "top_n": 15,
+  "horizon_days": 5,
+  "results": [
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-03",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-03",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-03",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-03",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-03",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-03",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    },
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-10",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-10",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-10",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-10",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-10",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-10",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    },
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-17",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-17",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-17",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-17",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-17",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-17",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    },
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-24",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-24",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-24",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-24",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-04-24",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-04-24",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    },
+    {
+      "variant": "baseline",
+      "ok": false,
+      "error": "init-rule 失败: 截面为空\n",
+      "step": "init-rule",
+      "date": "2026-05-01",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": false,
+      "error": "init-rule 失败: 截面为空\n",
+      "step": "init-rule",
+      "date": "2026-05-01",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": false,
+      "error": "init-rule 失败: 截面为空\n",
+      "step": "init-rule",
+      "date": "2026-05-01",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    },
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-08",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-08",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-08",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-08",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-08",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-08",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    },
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-15",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-15",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-15",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-15",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-15",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-15",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    },
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-22",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-22",
+      "description": "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    },
+    {
+      "variant": "llm_primary",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-22",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-22",
+      "description": "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    },
+    {
+      "variant": "deep_value",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-22",
+      "fail_rate": 1.0,
+      "fail_count": 15,
+      "pass_count": 0,
+      "pending_count": 0,
+      "mean_fwd_return": -2.46,
+      "median_fwd_return": -4.08,
+      "fwd_positive": 5,
+      "fwd_total": 15,
+      "tag_counts": {
+        "buy_unreachable": 15,
+        "forward_loss": 10,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-22",
+      "description": "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    }
+  ],
+  "comparison": {
+    "by_variant": [
+      {
+        "variant": "baseline",
+        "mean_fail_rate": 1.0,
+        "mean_fwd_return": -2.46,
+        "mean_fwd_positive_ratio": 35.0,
+        "total_runs": 7
+      },
+      {
+        "variant": "deep_value",
+        "mean_fail_rate": 1.0,
+        "mean_fwd_return": -2.46,
+        "mean_fwd_positive_ratio": 35.0,
+        "total_runs": 7
+      },
+      {
+        "variant": "llm_primary",
+        "mean_fail_rate": 1.0,
+        "mean_fwd_return": -2.46,
+        "mean_fwd_positive_ratio": 35.0,
+        "total_runs": 7
+      }
+    ],
+    "best_variant": "baseline",
+    "best_mean_fwd_return": -2.46,
+    "best_mean_fail_rate": 1.0,
+    "win_counts": {
+      "baseline": 7,
+      "llm_primary": 0,
+      "deep_value": 0
+    },
+    "total_dates": 7
+  }
+}

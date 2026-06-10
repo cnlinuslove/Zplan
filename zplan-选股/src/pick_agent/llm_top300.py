@@ -228,6 +228,24 @@ def run_llm_top_from_rule_scores(
         reverse=True,
     )
 
+    # ── 硬截断：ret_20d > 5% 的追涨股直接剔除，不送入 LLM ──
+    # 规则分审计证实：追涨股 5 日平均收益 -4.08%，是最差区间。
+    # strategy.yaml 的 max_ret_20d 是软因子，这里做硬兜底。
+    ret20_cutoff = 5.0
+    _before_cut = len(picks)
+    _rejected = [p for p in picks if (p.get("ret_20d") or 0) > ret20_cutoff]
+    picks = [p for p in picks if (p.get("ret_20d") or 0) <= ret20_cutoff]
+    if _rejected:
+        _rejected_codes = [f"{p['ts_code']}(ret20={p.get('ret_20d',0):.1f}%)" for p in _rejected[:10]]
+        logger.warning(
+            "硬截断 ret_20d > %.0f%%: 剔除 %s/%s 只（%s%s）",
+            ret20_cutoff,
+            len(_rejected),
+            _before_cut,
+            ", ".join(_rejected_codes),
+            "..." if len(_rejected) > 10 else "",
+        )
+
     llm_usage = None
     if use_llm and gemini_available() and strat.llm_enabled:
         picks, llm_usage = brief_review_scan_picks(

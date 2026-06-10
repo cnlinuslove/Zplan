@@ -1,0 +1,68 @@
+{
+  "generated_at": "20260608T211339Z",
+  "variants": {
+    "baseline": "当前配置：max_ret_20d=5%, 技术权重52%",
+    "strict_momentum": "收紧动量：max_ret_20d=3%, 追涨更严格",
+    "value_tilt": "偏价值：提高财务权重到25%"
+  },
+  "test_dates": [
+    "2026-05-21"
+  ],
+  "top_n": 12,
+  "horizon_days": 5,
+  "results": [
+    {
+      "variant": "baseline",
+      "ok": false,
+      "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+      "step": "llm-top",
+      "date": "2026-05-21",
+      "description": "当前配置：max_ret_20d=5%, 技术权重52%"
+    },
+    {
+      "variant": "strict_momentum",
+      "ok": false,
+      "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+      "step": "llm-top",
+      "date": "2026-05-21",
+      "description": "收紧动量：max_ret_20d=3%, 追涨更严格"
+    },
+    {
+      "variant": "value_tilt",
+      "ok": false,
+      "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+      "step": "llm-top",
+      "date": "2026-05-21",
+      "description": "偏价值：提高财务权重到25%"
+    }
+  ],
+  "comparison": {
+    "error": "所有变体均失败",
+    "details": [
+      {
+        "variant": "baseline",
+        "ok": false,
+        "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+        "step": "llm-top",
+        "date": "2026-05-21",
+        "description": "当前配置：max_ret_20d=5%, 技术权重52%"
+      },
+      {
+        "variant": "strict_momentum",
+        "ok": false,
+        "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+        "step": "llm-top",
+        "date": "2026-05-21",
+        "description": "收紧动量：max_ret_20d=3%, 追涨更严格"
+      },
+      {
+        "variant": "value_tilt",
+        "ok": false,
+        "error": "llm-top 失败: usage: main.py [-h] {init-rule,llm-top,pipeline,pipeline-full,deep-top} ...\nmain.py: error: unrecognized arguments: llm-top\n",
+        "step": "llm-top",
+        "date": "2026-05-21",
+        "description": "偏价值：提高财务权重到25%"
+      }
+    ]
+  }
+}

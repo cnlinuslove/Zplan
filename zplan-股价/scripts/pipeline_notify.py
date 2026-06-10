@@ -24,7 +24,7 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 def check_all_modules() -> dict[str, dict]:
-    """检查所有数据模块新鲜度。返回 {label: {count, latest, ok, threshold_days}}。"""
+    """检查所有数据模块新鲜度 + 截面数量。返回 {label: {count, latest, ok, ...}}。"""
     init_db()
     s = SessionLocal()
     now = datetime.now().date()
@@ -32,17 +32,17 @@ def check_all_modules() -> dict[str, dict]:
     modules: dict[str, dict] = {}
 
     checks = [
-        # (label, table, date_col, threshold_days)
-        ("股价日线",     "daily_prices",          "trade_date",      1),
-        ("衍生指标",     "daily_features",        "trade_date",      1),
-        ("估值截面",     "daily_snapshot",        "trade_date",      1),
-        ("筹码峰",       "daily_chip",            "trade_date",      1),
-        ("季报财务",     "financial_indicators",  "report_date",   100),  # 季报滞后正常
-        ("东财快讯",     "financial_alerts",      "published_at_utc", 1),
-        ("规则打分",     "stock_rule_scores",     "trade_date_as_of", 7),  # 每周
+        # (label, table, date_col, threshold_days, prev_day_min_pct)  prev_day_min_pct=99 表示不低于前日 99%
+        ("股价日线",     "daily_prices",          "trade_date",      1, 99),
+        ("衍生指标",     "daily_features",        "trade_date",      1, 99),
+        ("估值截面",     "daily_snapshot",        "trade_date",      1, 97),
+        ("筹码峰",       "daily_chip",            "trade_date",      1, None),
+        ("季报财务",     "financial_indicators",  "report_date",   100, None),
+        ("东财快讯",     "financial_alerts",      "published_at_utc", 1, None),
+        ("规则打分",     "stock_rule_scores",     "trade_date_as_of", 7, None),
     ]
 
-    for label, table, col, threshold in checks:
+    for label, table, col, threshold, min_pct in checks:
         try:
             r = s.execute(text(f"SELECT COUNT(*), MAX({col}) FROM {table}")).fetchone()
             cnt, latest_raw = r[0], r[1]
@@ -70,12 +70,38 @@ def check_all_modules() -> dict[str, dict]:
         days_ago = (now - latest_date).days
         ok = days_ago <= threshold
 
+        # 日期对但截面数量异常（对比前一个交易日，差异 > 允许值告警）
+        count_note = ""
+        if ok and min_pct is not None:
+            try:
+                today_cnt = s.execute(
+                    text(f"SELECT COUNT(DISTINCT ts_code) FROM {table} WHERE {col}=:d"),
+                    {"d": str(latest_date)},
+                ).fetchone()[0]
+                # 找前一个交易日日期
+                prev_date = s.execute(
+                    text(f"SELECT MAX({col}) FROM {table} WHERE {col}<:d"),
+                    {"d": str(latest_date)},
+                ).fetchone()
+                if prev_date and prev_date[0]:
+                    prev_cnt = s.execute(
+                        text(f"SELECT COUNT(DISTINCT ts_code) FROM {table} WHERE {col}=:pd"),
+                        {"pd": str(prev_date[0])},
+                    ).fetchone()[0]
+                    if today_cnt > 0 and prev_cnt > 0:
+                        pct = today_cnt / prev_cnt * 100
+                        if pct < min_pct:
+                            count_note = f"截面{today_cnt}只(前日{prev_cnt},仅{pct:.1f}%)"
+            except Exception:
+                pass
+
         modules[label] = {
             "count": cnt or 0,
             "latest": str(latest_date),
             "days_ago": days_ago,
-            "ok": ok,
+            "ok": ok and not count_note,
             "threshold": threshold,
+            "count_note": count_note,
         }
 
     s.close()
@@ -91,11 +117,15 @@ def build_message(modules: dict[str, dict], alert_mode: bool = False) -> tuple[s
     for label, info in modules.items():
         status = "✅" if info["ok"] else "🔴"
         latest_str = info["latest"]
-        if not info["ok"] and info.get("days_ago") is not None:
+        extra = info.get("count_note", "")
+        if not info["ok"] and info.get("days_ago") is not None and info.get("days_ago", 0) > info.get("threshold", 99):
             latest_str = f"{info['latest']}（{info['days_ago']}天前）"
         elif info["latest"] == "无":
             latest_str = "无数据"
-        lines.append(f"{status} {label} 至{latest_str}")
+        if extra:
+            lines.append(f"{status} {label} 至{latest_str} {extra}")
+        else:
+            lines.append(f"{status} {label} 至{latest_str}")
         if not info["ok"]:
             all_ok = False
 
@@ -129,29 +159,74 @@ def parse_pipeline_log(log_path: str) -> dict[str, str] | None:
 
 
 def main():
-    alert_mode = "--alert" in sys.argv
+    mode = "done"
     log_path = None
-    for a in sys.argv[1:]:
-        if a != "--alert" and not a.startswith("--"):
-            log_path = a
-            break
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--mode" and i + 1 < len(args):
+            mode = args[i + 1]; i += 2
+        elif a.startswith("--mode="):
+            mode = a.split("=", 1)[1]; i += 1
+        elif not a.startswith("--"):
+            log_path = a; i += 1
+        else:
+            i += 1
 
+    # ── 启动通知：简短 ──
+    if mode == "start":
+        now_str = datetime.now(BEIJING_TZ).strftime("%m-%d %H:%M")
+        msg = f"🚀 Z-Plan 管道启动 {now_str}"
+        push_wechat_text(msg)
+        print(f"启动播报 — {msg}")
+        return
+
+    # ── 崩溃通知 ──
+    if mode == "crashed":
+        now_str = datetime.now(BEIJING_TZ).strftime("%m-%d %H:%M")
+        msg = f"💀 Z-Plan 管道异常终止 {now_str}\n已自动清理锁文件，后续健康检查将尝试补跑"
+        if log_path:
+            msg += f"\n日志: {log_path}"
+        push_wechat_text(msg)
+        print(f"崩溃播报 — {msg}")
+        return
+
+    # ── 正常完成：全模块状态 ──
     modules = check_all_modules()
-    msg, all_ok = build_message(modules, alert_mode=alert_mode)
+    msg, all_ok = build_message(modules, alert_mode=False)
 
-    # 如果有管道日志，额外附上步骤摘要
+    # 如果有管道日志，额外附上步骤摘要 + LLM 消耗
     if log_path:
         steps = parse_pipeline_log(log_path)
         if steps:
             fail_steps = [k for k, v in steps.items() if v == "FAIL"]
             if fail_steps:
                 msg += f"\n🔧 失败步骤: {', '.join(fail_steps)}"
+        # 从日志抓 LLM_COST 行
+        try:
+            with open(log_path) as f:
+                for line in f:
+                    if "LLM_COST:" in line and "run=" in line:
+                        parts = line.strip().split("LLM_COST:")[1].strip()
+                        # parts: run=153 model=deepseek-v4 in=122648 out=1272 total=159632 usd=0.0345 cny=0.25
+                        data = {}
+                        for kv in parts.split():
+                            if "=" in kv:
+                                k, v = kv.split("=", 1)
+                                data[k] = v
+                        cny = data.get("cny", "?")
+                        total = data.get("total", "?")
+                        msg += f"\n🤖 LLM: {total} tokens · ¥{cny}"
+                        break
+        except Exception:
+            pass
 
     ok = push_wechat_text(msg)
     print(f"播报 {'成功' if ok else '失败'} — {msg}")
 
-    # 有异常且非告警模式时，再发一条告警（去重）
-    if not all_ok and not alert_mode:
+    # 有异常时额外发告警
+    if not all_ok:
         alert_msg, _ = build_message(modules, alert_mode=True)
         if log_path:
             steps = parse_pipeline_log(log_path)

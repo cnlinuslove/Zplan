@@ -1,0 +1,47 @@
+{
+  "evaluated_at": "2026-06-10T16:21:51.560122+00:00",
+  "sample_count": 30,
+  "horizons": {
+    "1": {
+      "total": 29,
+      "correct": 9,
+      "accuracy_pct": 31.0,
+      "avg_actual_return": 0.01
+    },
+    "3": {
+      "total": 29,
+      "correct": 12,
+      "accuracy_pct": 41.4,
+      "avg_actual_return": 0.21
+    },
+    "5": {
+      "total": 28,
+      "correct": 13,
+      "accuracy_pct": 46.4,
+      "avg_actual_return": 0.14
+    },
+    "20": {
+      "total": 24,
+      "correct": 10,
+      "accuracy_pct": 41.7,
+      "avg_actual_return": -0.21
+    }
+  },
+  "by_direction": {
+    "bullish": {
+      "count": 19,
+      "correct": 7,
+      "accuracy_pct": 36.8
+    },
+    "range-bound": {
+      "count": 10,
+      "correct": 2,
+      "accuracy_pct": 20.0
+    },
+    "?": {
+      "count": 1,
+      "correct": 0,
+      "accuracy_pct": 0.0
+    }
+  }
+}

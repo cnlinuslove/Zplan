@@ -169,7 +169,7 @@ def plot_stock_chart(
     plt.close(fig2)
     logger.info("MACD/相似图已生成: %s", path2)
 
-    return path1  # 主入口保持兼容，返回 K 线图路径
+    return {"kline": path1, "macd": path2}  # 返回两张图路径
 
 
 # ── 技术解读生成 ────────────────────────────────────────────────
@@ -367,6 +367,13 @@ def _draw_main_chart(
     # ── X 轴 ──
     _format_date_axis(ax, df)
 
+    # ── Y 轴价格标注 ──
+    y_min, y_max = df["low"].min(), df["high"].max()
+    if y_min and y_max and y_max > y_min:
+        ax.set_ylim(y_min * 0.97, y_max * 1.03)
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+        ax.tick_params(axis="y", colors=CLR_TEXT_BRIGHT, labelsize=8)
+
     # ── 标题 ──
     display_name = name or code
     close_val = df["close"].iloc[-1]
@@ -388,10 +395,11 @@ def _draw_volume(ax: plt.Axes, df: pd.DataFrame, interp: dict[str, list[str]]) -
     """成交量副图 + 量价解读。"""
     n = len(df)
     colors = [
-        CLR_VOL_UP if df["close"].iloc[i] >= df["open"].iloc[i] else CLR_VOL_DOWN
+        CLR_VOL_UP if (df["close"].iloc[i] or 0) >= (df["open"].iloc[i] or 0) else CLR_VOL_DOWN
         for i in range(n)
     ]
-    ax.bar(range(n), df["volume"].values, color=colors, width=0.75, edgecolor="none", alpha=0.85)
+    vol_vals = df["volume"].fillna(0).values
+    ax.bar(range(n), vol_vals, color=colors, width=0.75, edgecolor="none", alpha=0.85)
 
     if "vol_ma20" in df.columns:
         ax.plot(range(n), df["vol_ma20"].values, color=CLR_MA20, linewidth=1.5, label="均量(MA20)")
@@ -673,3 +681,201 @@ def _stock_name(code: str) -> str | None:
             ).scalar()
     except Exception:
         return None
+
+
+# ── 指数 K 线图 ──────────────────────────────────────────────────
+
+# 指数名映射
+_INDEX_DISPLAY_NAMES: dict[str, str] = {
+    "000001": "上证指数", "399001": "深证成指", "399006": "创业板指",
+    "000688": "科创50", "000300": "沪深300", "000905": "中证500", "000852": "中证1000",
+}
+
+
+def plot_index_chart(
+    index_code: str,
+    *,
+    lookback: int = 120,
+    output_dir: str | None = None,
+) -> dict[str, str]:
+    """生成指数全景分析图（K 线 + MACD + 历史相似形态画廊）。
+
+    复用 ``plot_stock_chart`` 的渲染管线，数据源走 ``get_index_bars``，
+    形态搜索走 ``search_similar_index_patterns``。
+
+    Returns:
+        {"kline": path, "macd": path} — 两张 PNG 路径
+    """
+    from zplan_shared.market import get_index_bars
+    from zplan_shared.pattern_similarity import search_similar_index_patterns
+
+    _init_matplotlib()
+    init_db()
+
+    name = _INDEX_DISPLAY_NAMES.get(index_code, index_code)
+
+    # 1. 获取指数日线
+    bars = get_index_bars(index_code)
+    if bars.empty or len(bars) < 30:
+        raise ValueError(f"无指数行情数据: {index_code}")
+
+    enriched = enrich_bars(bars)
+    recent = enriched.tail(lookback).copy()
+    if recent.empty:
+        raise ValueError(f"指数数据不足: {index_code}")
+
+    # 填充 NaN（指数早期数据可能缺量/额等字段）
+    for col in ["volume", "amount", "turnover_rate", "pct_chg"]:
+        if col in recent.columns:
+            recent[col] = recent[col].fillna(0)
+    # OHLC 用前向填充
+    for col in ["open", "high", "low", "close"]:
+        if col in recent.columns:
+            recent[col] = recent[col].ffill().bfill()
+
+    # 计算支撑/压力位
+    price_levels = suggested_price_levels(bars)
+
+    # 2. 搜索相似历史形态
+    similar_patterns = search_similar_index_patterns(index_code, top_k=5)
+
+    # 3. 生成技术解读
+    interpretation = _build_interpretation(recent, price_levels, None, None)
+
+    # 4. 输出目录
+    if output_dir is None:
+        from zplan_shared.config import ZPLAN_ROOT
+        output_dir = os.path.join(ZPLAN_ROOT, "charts")
+    os.makedirs(output_dir, exist_ok=True)
+    as_of_str = str(recent.index[-1]).replace("-", "")[:8]
+    has_gallery = bool(similar_patterns and similar_patterns.get("matches"))
+
+    # 用 "idx_" 前缀区分个股
+    code_label = f"idx_{index_code}"
+
+    # 标题含当日收盘价和涨跌
+    close_val = float(recent["close"].iloc[-1]) if recent["close"].iloc[-1] is not None else None
+    prev_close = float(recent["close"].iloc[-2]) if len(recent) >= 2 and recent["close"].iloc[-2] is not None else None
+    pct_str = ""
+    if close_val and prev_close and prev_close > 0:
+        chg_pct = (close_val - prev_close) / prev_close * 100
+        chg_amt = close_val - prev_close
+        arrow = "↑" if chg_pct > 0 else ("↓" if chg_pct < 0 else "→")
+        pct_str = f"  {arrow} {chg_pct:+.2f}% ({chg_amt:+.2f})"
+    title = f"{name}（{index_code}） ¥{close_val:.2f}{pct_str}" if close_val else f"{name}（{index_code}）"
+
+    # ── 图 1: K线 + 均线 + 量能 ──
+    fig1 = plt.figure(figsize=(22, 12))
+    gs1 = GridSpec(2, 1, figure=fig1, height_ratios=[5, 1.5], hspace=0.15)
+    ax_main = fig1.add_subplot(gs1[0])
+    ax_vol = fig1.add_subplot(gs1[1], sharex=ax_main)
+    _draw_main_chart(ax_main, recent, price_levels, None, index_code, name, None, title, interpretation)
+    _draw_volume(ax_vol, recent, interpretation)
+    _stamp_footer(fig1, code_label, recent)
+    fname1 = f"{code_label}_{as_of_str}_kline.png"
+    path1 = os.path.join(output_dir, fname1)
+    fig1.savefig(path1, dpi=FIG_DPI, bbox_inches="tight", facecolor=CLR_BG, edgecolor="none")
+    plt.close(fig1)
+    logger.info("指数K线图已生成: %s", path1)
+
+    # ── 图 2: MACD + 相似形态画廊 ──
+    if has_gallery:
+        n_matches = len(similar_patterns["matches"])
+        fig2 = plt.figure(figsize=(22, 4 + n_matches * 2.2))
+        gs2 = GridSpec(2, 1, figure=fig2, height_ratios=[3, 2.5 + n_matches * 0.5], hspace=0.3)
+        ax_macd = fig2.add_subplot(gs2[0])
+        ax_gallery_row = fig2.add_subplot(gs2[1])
+        ax_gallery_row.axis("off")
+        gs_gallery = GridSpecFromSubplotSpec(1, n_matches, subplot_spec=gs2[1], wspace=0.12)
+        gallery_axes = [fig2.add_subplot(gs_gallery[i]) for i in range(n_matches)]
+    else:
+        fig2 = plt.figure(figsize=(22, 7))
+        ax_macd = fig2.add_subplot()
+        gallery_axes = []
+
+    _draw_macd(ax_macd, recent, interpretation)
+    if has_gallery:
+        _draw_similar_gallery(fig2, gallery_axes, similar_patterns)
+    _stamp_footer(fig2, code_label, recent)
+    fname2 = f"{code_label}_{as_of_str}_macd.png"
+    path2 = os.path.join(output_dir, fname2)
+    fig2.savefig(path2, dpi=FIG_DPI, bbox_inches="tight", facecolor=CLR_BG, edgecolor="none")
+    plt.close(fig2)
+    logger.info("指数MACD/相似图已生成: %s", path2)
+
+    return {"kline": path1, "macd": path2}
+
+
+# ── 板块涨跌热力图 ──────────────────────────────────────────────
+
+def plot_sector_heatmap(
+    industries: list[dict[str, Any]],
+    *,
+    output_dir: str | None = None,
+    top_n: int = 20,
+) -> str:
+    """行业板块涨跌横条图（红涨绿跌，按涨幅排序）。
+
+    Args:
+        industries: [{"industry": "半导体", "avg_pct": 3.2, "up_n": 45, "down_n": 12}, ...]
+        output_dir: 输出目录
+        top_n: 展示 Top/Bottom N 个板块
+
+    Returns:
+        PNG 文件路径
+    """
+    _init_matplotlib()
+
+    if not industries:
+        raise ValueError("无行业数据")
+
+    sorted_inds = sorted(industries, key=lambda x: x.get("avg_pct", 0), reverse=True)
+    display = sorted_inds[:top_n] + sorted_inds[-top_n:]
+    # 去重
+    seen = set()
+    deduped = []
+    for d in display:
+        if d["industry"] not in seen:
+            deduped.append(d)
+            seen.add(d["industry"])
+    deduped.sort(key=lambda x: x.get("avg_pct", 0), reverse=True)
+
+    names = [d["industry"] for d in deduped]
+    values = [d.get("avg_pct", 0) for d in deduped]
+    up_downs = [f"{d.get('up_n', 0)}↑/{d.get('down_n', 0)}↓" for d in deduped]
+    colors = [CLR_UP if v > 0 else CLR_DOWN for v in values]
+
+    fig, ax = plt.subplots(figsize=(12, max(6, len(names) * 0.4)))
+    fig.patch.set_facecolor(CLR_BG)
+    ax.set_facecolor(CLR_BG)
+
+    bars = ax.barh(range(len(names)), values, color=colors, height=0.7, edgecolor="none", alpha=0.85)
+    ax.set_yticks(range(len(names)))
+    ax.set_yticklabels(names, fontsize=10)
+    ax.invert_yaxis()
+    ax.axvline(0, color="#666", linewidth=0.8, linestyle="-")
+    ax.set_xlabel("平均涨跌幅 (%)", fontsize=11, color=CLR_TEXT)
+    ax.set_title(f"行业板块涨跌热力图（{date.today()}）", fontsize=14, fontweight="bold", color=CLR_TEXT, pad=12)
+
+    # 标注涨跌家数
+    for i, (v, ud) in enumerate(zip(values, up_downs)):
+        label = f"{v:+.2f}%  ({ud})"
+        x_pos = v + 0.15 if v >= 0 else v - 0.15
+        ha = "left" if v >= 0 else "right"
+        ax.text(x_pos, i, label, va="center", ha=ha, fontsize=8.5, color=CLR_TEXT)
+
+    ax.tick_params(colors=CLR_TEXT)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    # 输出
+    if output_dir is None:
+        from zplan_shared.config import ZPLAN_ROOT
+        output_dir = os.path.join(ZPLAN_ROOT, "charts")
+    os.makedirs(output_dir, exist_ok=True)
+    today_str = date.today().strftime("%Y%m%d")
+    path = os.path.join(output_dir, f"sector_heatmap_{today_str}.png")
+    fig.savefig(path, dpi=FIG_DPI, bbox_inches="tight", facecolor=CLR_BG, edgecolor="none")
+    plt.close(fig)
+    logger.info("板块热力图已生成: %s", path)
+    return path

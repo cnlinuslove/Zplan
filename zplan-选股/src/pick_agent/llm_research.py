@@ -66,6 +66,26 @@ _RESEARCH_SCHEMA: dict[str, Any] = {
             "items": {"type": "string"},
             "description": "3-4 条不同走势应对策略",
         },
+        "exit_plan": {
+            "type": "object",
+            "properties": {
+                "recommended_plan": {
+                    "type": "string",
+                    "enum": ["static", "trailing_stop", "atr_trail", "ma_stop", "partial_tp"],
+                    "description": "推荐出场策略类型",
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "出场策略选择逻辑，≤80字",
+                },
+                "conditional_exits": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "2-3 条不同市场情境下的退出方案（强/弱/震荡）",
+                },
+            },
+            "required": ["recommended_plan", "reasoning"],
+        },
         "data_gaps": {
             "type": "array",
             "items": {"type": "string"},
@@ -175,7 +195,7 @@ def _build_prompt(base_report: dict[str, Any], bars_table: list[dict[str, Any]])
 5. **资讯**：解读关联新闻与事件类型；无新闻则 news_score 取 50。
 6. **竞争力与产品**：如有【公司档案/行业对比/研报/机构持仓】数据，须在 company_summary 中分析公司核心产品与竞争壁垒，在 opportunities 中引用券商评级和盈利预测，在 risks 中标注机构持仓变化风险。
 7. **综合打分 composite_score**（0-100）与 recommendation（五选一）；追高风险时 composite 不得高于规则引擎综合分。
-8. buy_price 必须在 **[close×0.98, close×1.0]** 区间内。A 股 T+1 场景下，次日开盘正常滑点约 0-2%，买入价最多只应低于收盘价 2%。若规则引擎给的「规则建议买卖价」中 suggested_buy 在此区间，**必须直接采用**。禁止设定低于 close×0.98 的买入价（回测验证此类买价 100% unreachable）。target ≥ buy_price×1.05；stop 须与支撑位一致。
+8. buy_price 必须在 **[close×0.98, close×1.0]** 区间内。**必须直接采用**规则引擎给的「规则建议买卖价」中 suggested_buy（已综合 MA20 回踩/支撑位/ATR 定价，折价 0.5%~2%）。禁止自定买入价。MA20 附近的股票可给较深折扣（回踩买入），高位股折扣≤0.5%。禁止设定低于 close×0.98 的买入价（T+1 难成交）。target ≥ buy_price×1.05；stop 须与支撑位一致。
 9. scenarios：基准/回调/破位/突发利空等 3-4 条可执行策略。
 10. 输出合法 JSON，字段符合 schema；中文撰写。"""
 
@@ -374,9 +394,23 @@ _SCAN_BRIEF_SCHEMA: dict[str, Any] = {
                         },
                         "description": "1-3 项具体风险；无风险填['无明显风险']",
                     },
+                    "positive_flags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "多题材催化",
+                                "资讯催化",
+                                "温和放量上涨",
+                                "买价可成交",
+                                "无明显催化",
+                            ],
+                        },
+                        "description": "1-3 项正面催化剂；无催化填['无明显催化']",
+                    },
                     "confidence_adjustment": {
                         "type": "number",
-                        "description": "相对规则分的置信调整：-5 到 +3，默认 0；仅在确有证据时微调",
+                        "description": "相对规则分的置信调整：-5 到 +5，默认 0；正面催化可加，风险可减",
                     },
                     "recommendation": {
                         "type": "string",
@@ -387,8 +421,17 @@ _SCAN_BRIEF_SCHEMA: dict[str, Any] = {
                         "description": "与规则引擎差异说明，≤30字",
                     },
                 },
-                "required": ["ts_code", "trend_one_liner", "risk_flags", "confidence_adjustment", "recommendation"],
+                "required": ["ts_code", "trend_one_liner", "risk_flags", "positive_flags", "confidence_adjustment", "recommendation"],
             },
+        },
+        "recommended_exit_plan": {
+            "type": "string",
+            "enum": ["static", "trailing_stop", "atr_trail", "ma_stop", "partial_tp"],
+            "description": "最适合此标的的退出策略类型（全局推荐，覆盖多数票）",
+        },
+        "exit_reasoning": {
+            "type": "string",
+            "description": "出场策略选择理由，≤60字。如「波动偏高(ATR%>5)需宽松止损」或「趋势强劲宜用移动止盈」",
         },
     },
     "required": ["reviews"],
@@ -427,96 +470,190 @@ def _compact_pick_row(p: dict[str, Any]) -> dict[str, Any]:
 
 
 _LLM_BRIEF_RULES = """
-【定位】你是风险审核员，不是评分员。规则引擎已给出综合基准分（rule_composite），你只需：1) 识别具体风险 → risk_flags；2) 微小置信调整 → confidence_adjustment；3) 操作建议 → recommendation。
+【定位】你是投资分析师。规则引擎已给出综合基准分（rule_composite），你需要综合评估风险与机会：1) 识别风险 → risk_flags；2) 识别正面催化剂 → positive_flags；3) 置信调整 → confidence_adjustment（可正可负）；4) 操作建议 → recommendation。
 
-【核心约束：你不是在打分，而是在标注风险】
-- confidence_adjustment 默认 0。仅在有明确证据时微调（-5 到 +3）。
-- 发现 risk_flags 中 ≥2 项严重风险（追高/量价背离/接近高点/超买）→ recommendation 最高「观望」。
+【风险识别（必须标注的风险）】
 - ret_20d>5% 且 vol_ratio20<1.0 → 必须标注「量价背离(缩量上涨)」。
 - ret_20d>7% → 必须标注「追高风险(涨幅过高)」。
-- high_60d_pct>92% → 必须标注「接近阶段高点」。
+- high_60d_pct>90% → 必须标注「接近阶段高点」。
 - KDJ 的 K>80 或 RSI>70 → 必须标注「超买区域(KDJ/RSI)」。
 - concept_count=0 → 写「题材库未覆盖」，不得编造概念名。
-- 无以上风险 → risk_flags 填 ['无明显风险']，confidence_adjustment 填 0。
+
+【正面催化剂识别（有明确证据时标注）】
+- concept_count≥3 且题材与近期热点相关 → positive_flags 标注「多题材催化」。
+- news_48h 有利好事件（中标/业绩预增/新产品/政策利好）→ 标注「资讯催化」。
+- ret_20d 在 0~5% 且 vol_ratio20>1.0 且无明显风险 → 标注「温和放量上涨」。
+- close_vs_buy_gap_pct<5% → 标注「买价可成交」。
+- 无明显利好 → positive_flags 填 ['无明显催化']。
+
+【confidence_adjustment 规则】
+- 默认 0。有正面催化剂可 +1~+5；有风险可 -1~-5。
+- 正面催化剂≥2 项且风险≤1 项 → 至少 +2。
+- 严重风险≥2 项且无正面催化剂 → 至少 -3。
+
+【recommendation 规则（五选一：强烈关注/关注/观望/谨慎/回避）】
+- 正面催化剂≥2 且风险≤1 → 可「强烈关注」或「关注」。
+- 风险≥2 且无正面催化剂 → 最高「观望」。
+- ret_20d>7% → 最高「观望」（除非有极强正面催化剂可升至「关注」）。
+- 基本面恶化或监管/减持 → 「回避」。
+- 其余情况综合判断，鼓励给出明确方向，减少「观望」。
 
 【trend_one_liner 要求】
 - 引用 JSON 中具体数值（ret_20d、vol_ratio20、KDJ K/D、signals 等），≤60 字。
-- 若 ret_20d>3% 须写具体涨幅；若有风险须指明风险关键词。
+- 若有正面催化须指明；若有风险须指明风险关键词。
 - 禁止套话：「均线多头排列」「技术形态强势」「走势向好」等空洞描述一律禁止。
 
 【vs_rule_engine 要求】
-- 说明风险因素或与规则引擎的差异，≤30 字。
-- 若无明显风险则写「风险可控」。"""
+- 说明与规则引擎的差异（风险或催化因素），≤30 字。
+- 若无明显差异则写「与规则引擎一致」。
+
+【出场策略推荐（recommended_exit_plan + exit_reasoning）】
+为整体选股池推荐最合适的出场策略类型，综合以下判断：
+- 多数票波动偏高（ATR% > 5）→ 推荐 atr_trail（ATR 自适应止损）。
+- 多数票趋势强劲（均线多头 + ret_20d 3~7%）→ 推荐 trailing_stop（移动止盈保利润）。
+- 多数票偏题材催化（多概念+高资讯量）→ 推荐 partial_tp（分批止盈降风险）。
+- 多数票超买/接近高点 → 推荐 static（固定目标不恋战）。
+- 波动极低（ATR%<2）且区间震荡 → 推荐 ma_stop（均线破位出场）。
+- 无明确倾向 → 推荐 static（默认静态止盈止损）。
+exit_reasoning 不超过 60 字，引用关键指标支撑选择。"""
 
 
 
-def _apply_risk_penalty(p: dict[str, Any], br: dict[str, Any]) -> dict[str, Any]:
-    """将 LLM 风险标记转化为分数调整，取代旧版分数封顶。
+# ── 处罚权重兜底（当 strategy.yaml 不可用或缺少 penalty_weights 段时）──
+_DEFAULT_PENALTY_WEIGHTS: dict[str, Any] = {
+    "risk_flags": {
+        "追高风险(涨幅过高)": 5.0,
+        "量价背离(缩量上涨)": 4.0,
+        "接近阶段高点": 3.0,
+        "超买区域(KDJ/RSI)": 3.0,
+        "监管/减持风险": 6.0,
+        "基本面恶化": 5.0,
+        "题材退潮": 4.0,
+    },
+    "positive_flags": {
+        "多题材催化": 2.0,
+        "资讯催化": 2.0,
+        "温和放量上涨": 2.0,
+        "买价可成交": 1.0,
+    },
+    "program_constraints": {
+        "ret20_over_7_min_penalty": 6.0,
+        "ret20_over_5_min_penalty": 3.0,
+        "high60_over_95_min_penalty": 3.0,
+        "divergence_min_penalty": 4.0,
+        "divergence_ret20_threshold": 3.0,
+        "divergence_vol_threshold": 0.8,
+    },
+    "recommendation_rules": {
+        "severe_penalty_downgrade": 10,
+        "net_risk_high_downgrade": 5,
+        "positive_upgrade_threshold": 3,
+        "net_risk_low_upgrade": 2,
+    },
+}
 
-    LLM 不再输出 composite_score，改为 risk_flags + confidence_adjustment。
-    最终 adjusted_score = rule_composite + confidence_adjustment - risk_penalty。
+
+def _apply_risk_penalty(
+    p: dict[str, Any],
+    br: dict[str, Any],
+    penalty_weights: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """将 LLM 风险/催化标记转化为分数调整，取代旧版分数封顶。
+
+    LLM 输出 risk_flags + positive_flags + confidence_adjustment。
+    最终 adjusted_score = rule_composite + confidence_adjustment - risk_penalty + positive_boost。
+
+    处罚权重优先从 penalty_weights 参数读取，其次从 strategy.yaml 加载，最后用硬编码兜底。
     """
+    # ── 加载处罚权重 ──
+    if penalty_weights is None:
+        try:
+            from pick_agent.strategy import load_strategy
+            penalty_weights = load_strategy().penalty_weights
+        except Exception:
+            penalty_weights = {}
+    if not penalty_weights:
+        penalty_weights = _DEFAULT_PENALTY_WEIGHTS
+
+    risk_weights = penalty_weights.get("risk_flags", _DEFAULT_PENALTY_WEIGHTS["risk_flags"])
+    positive_weights = penalty_weights.get("positive_flags", _DEFAULT_PENALTY_WEIGHTS["positive_flags"])
+    constraints = penalty_weights.get("program_constraints", _DEFAULT_PENALTY_WEIGHTS["program_constraints"])
+    rec_rules = penalty_weights.get("recommendation_rules", _DEFAULT_PENALTY_WEIGHTS["recommendation_rules"])
+
     out = dict(br)
     rule = float(p.get("rule_composite_score") or p.get("composite_score") or 0)
     ret20 = p.get("ret_20d")
     high_pct = p.get("high_60d_pct")
     vol_ratio = p.get("vol_ratio20")
 
-    # LLM 置信调整（小范围：-5 到 +3）
+    # LLM 置信调整（-5 到 +5，允许正面催化剂抬分）
     confidence_adj = float(br.get("confidence_adjustment", 0))
-    confidence_adj = max(-5.0, min(3.0, confidence_adj))
+    confidence_adj = max(-5.0, min(5.0, confidence_adj))
 
-    # 从 risk_flags 计算额外扣分
+    # 从 risk_flags 计算扣分（权重可配置）
     risk_flags = list(br.get("risk_flags") or [])
     risk_penalty = 0.0
-    if "追高风险(涨幅过高)" in risk_flags:
-        risk_penalty += 5.0
-    if "量价背离(缩量上涨)" in risk_flags:
-        risk_penalty += 4.0
-    if "接近阶段高点" in risk_flags:
-        risk_penalty += 3.0
-    if "超买区域(KDJ/RSI)" in risk_flags:
-        risk_penalty += 3.0
-    if "监管/减持风险" in risk_flags:
-        risk_penalty += 6.0
-    if "基本面恶化" in risk_flags:
-        risk_penalty += 5.0
-    if "题材退潮" in risk_flags:
-        risk_penalty += 4.0
+    for flag in risk_flags:
+        risk_penalty += float(risk_weights.get(flag, 0))
 
-    # 程序侧硬约束（独立于 LLM，双重保险）
+    # 正面催化剂加分（权重可配置）
+    positive_flags = list(br.get("positive_flags") or [])
+    positive_boost = 0.0
+    for flag in positive_flags:
+        positive_boost += float(positive_weights.get(flag, 0))
+
+    # 程序侧硬约束（独立于 LLM，双重保险 — 阈值可配置）
+    ret20_over_7 = float(constraints.get("ret20_over_7_min_penalty", 6.0))
+    ret20_over_5 = float(constraints.get("ret20_over_5_min_penalty", 3.0))
+    high60_over_95 = float(constraints.get("high60_over_95_min_penalty", 3.0))
+    div_min = float(constraints.get("divergence_min_penalty", 4.0))
+    div_ret20 = float(constraints.get("divergence_ret20_threshold", 3.0))
+    div_vol = float(constraints.get("divergence_vol_threshold", 0.8))
+
     if ret20 is not None:
         r = float(ret20)
         if r > 7:
-            risk_penalty = max(risk_penalty, 6.0)
+            risk_penalty = max(risk_penalty, ret20_over_7)
             if "追高风险(涨幅过高)" not in risk_flags:
                 risk_flags.append("追高风险(涨幅过高)")
         elif r > 5:
-            risk_penalty = max(risk_penalty, 3.0)
-    if high_pct is not None and float(high_pct) > 92:
-        risk_penalty = max(risk_penalty, 4.0)
+            risk_penalty = max(risk_penalty, ret20_over_5)
+    if high_pct is not None and float(high_pct) > 95:
+        risk_penalty = max(risk_penalty, high60_over_95)
         if "接近阶段高点" not in risk_flags:
             risk_flags.append("接近阶段高点")
-    if ret20 is not None and float(ret20) > 3 and vol_ratio is not None and float(vol_ratio) < 0.8:
-        risk_penalty = max(risk_penalty, 4.0)
+    if ret20 is not None and float(ret20) > div_ret20 and vol_ratio is not None and float(vol_ratio) < div_vol:
+        risk_penalty = max(risk_penalty, div_min)
         if "量价背离(缩量上涨)" not in risk_flags:
             risk_flags.append("量价背离(缩量上涨)")
 
-    # 推荐语降级（基于风险）
+    # 推荐语调整：风险与催化剂综合判断（阈值可配置）
     rec = str(out.get("recommendation") or "")
-    if risk_penalty >= 8 and rec in ("强烈关注", "关注", "观望"):
+    net_risk = risk_penalty - positive_boost
+
+    severe_downgrade = float(rec_rules.get("severe_penalty_downgrade", 10))
+    net_risk_downgrade = float(rec_rules.get("net_risk_high_downgrade", 5))
+    positive_upgrade = float(rec_rules.get("positive_upgrade_threshold", 3))
+    net_risk_upgrade = float(rec_rules.get("net_risk_low_upgrade", 2))
+
+    if risk_penalty >= severe_downgrade and rec in ("强烈关注", "关注", "观望"):
         out["recommendation"] = "谨慎"
-    elif risk_penalty >= 4 and rec in ("强烈关注", "关注"):
+    elif net_risk >= net_risk_downgrade and rec in ("强烈关注", "关注"):
         out["recommendation"] = "观望"
+    # 正面催化剂可升一级：观望→关注
+    if net_risk <= net_risk_upgrade and positive_boost >= positive_upgrade and rec == "观望":
+        out["recommendation"] = "关注"
     if ret20 is not None and float(ret20) > 7 and rec in ("强烈关注", "关注", "观望"):
         out["recommendation"] = "谨慎"
 
     # 计算最终分
-    final_score = rule + confidence_adj - risk_penalty
+    final_score = rule + confidence_adj - risk_penalty + positive_boost
     out["adjusted_score"] = round(max(0.0, min(100.0, final_score)), 1)
     out["risk_penalty"] = risk_penalty
+    out["positive_boost"] = positive_boost
     out["confidence_adjustment"] = confidence_adj
     out["risk_flags"] = risk_flags
+    out["positive_flags"] = positive_flags
     return out
 
 
@@ -526,9 +663,9 @@ def _brief_review_one(
     as_of: str | None,
     model: str | None,
 ) -> dict[str, Any]:
-    """单票简评 — LLM 作为风险审核员（不输出 composite_score）。"""
+    """单票简评 — LLM 作为投资分析师（评估风险与催化剂）。"""
     row = _compact_pick_row(p)
-    prompt = f"""A股风险审核。数据截止 {as_of or '最新'}。
+    prompt = f"""A股投资分析。数据截止 {as_of or '最新'}。
 {_LLM_BRIEF_RULES}
 标的：{json.dumps(row, ensure_ascii=False)}
 输出 JSON 单对象：ts_code, trend_one_liner(≤60字), risk_flags, confidence_adjustment, recommendation, vs_rule_engine(≤30字)。"""
@@ -552,7 +689,9 @@ def _brief_review_one(
         "recommendation": br.get("recommendation"),
         "vs_rule_engine": br.get("vs_rule_engine"),
         "risk_flags": br.get("risk_flags"),
+        "positive_flags": br.get("positive_flags"),
         "risk_penalty": br.get("risk_penalty"),
+        "positive_boost": br.get("positive_boost"),
         "confidence_adjustment": br.get("confidence_adjustment"),
     }
     if usage:
@@ -574,10 +713,10 @@ def _brief_review_batch(
     model: str | None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     rows = [_compact_pick_row(p) for p in picks]
-    prompt = f"""你是 A 股风险审核员。以下为规则引擎筛出的 {len(rows)} 只（数据截止 {as_of or '最新'}）。
+    prompt = f"""你是 A 股投资分析师。以下为规则引擎筛出的 {len(rows)} 只（数据截止 {as_of or '最新'}）。
 {_LLM_BRIEF_RULES}
 
-请对**每一只**基于 JSON 中的 concepts、news_48h、close、ret_20d、high_60d_pct、vol_ratio20、KDJ、signals 写 trend_one_liner（**一句话**，≤60字），并给出 risk_flags、confidence_adjustment、recommendation。
+请对**每一只**基于 JSON 中的 concepts、news_48h、close、ret_20d、high_60d_pct、vol_ratio20、KDJ、signals 写 trend_one_liner（**一句话**，≤60字），并给出 risk_flags、positive_flags、confidence_adjustment、recommendation。
 vs_rule_engine 每项 **≤30字**。勿漏 ts_code。
 
 【候选列表 JSON】
@@ -611,7 +750,9 @@ vs_rule_engine 每项 **≤30字**。勿漏 ts_code。
             "recommendation": br.get("recommendation"),
             "vs_rule_engine": br.get("vs_rule_engine"),
             "risk_flags": br.get("risk_flags"),
+            "positive_flags": br.get("positive_flags"),
             "risk_penalty": br.get("risk_penalty"),
+            "positive_boost": br.get("positive_boost"),
             "confidence_adjustment": br.get("confidence_adjustment"),
         }
         merged.append(out)

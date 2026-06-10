@@ -496,3 +496,195 @@ def _summarize(matches: list[dict[str, Any]]) -> dict[str, Any]:
         "worst_return": round(worst, 2),
         "verdict": verdict,
     }
+
+
+# ── 指数相似形态搜索 ──────────────────────────────────────────────
+
+def search_similar_index_patterns(
+    index_code: str,
+    *,
+    as_of: str | date | None = None,
+    top_k: int = 5,
+    min_similarity: float = 0.55,
+    window_days: int = 60,
+    forward_days: int = 20,
+) -> dict[str, Any]:
+    """搜索与目标指数当前技术形态最相似的历史片段。
+
+    与 ``find_similar_patterns`` 同款算法，但数据源走 ``daily_index`` 表，
+    只在**同一指数**的历史中搜索（上证当前走势 vs 上证历史走势）。
+
+    Args:
+        index_code: 6 位指数代码（如 000001）
+        as_of: 截止日期（默认最新）
+        top_k: 返回 Top-K 匹配
+        min_similarity: 最低相似度阈值
+        window_days: 特征窗口长度
+        forward_days: 前向收益计算天数
+
+    Returns:
+        同 ``find_similar_patterns`` 格式
+    """
+    from zplan_shared.market import get_index_bars  # noqa: E402
+
+    init_db()
+
+    # 1. 获取指数 K 线
+    bars = get_index_bars(index_code)
+    if bars.empty or len(bars) < window_days + forward_days:
+        return {"matches": [], "summary": _empty_summary(), "target": _index_target_info(index_code, None)}
+
+    enriched = enrich_bars(bars)
+    target_date = _resolve_as_of(as_of, enriched)
+    if target_date is None:
+        return {"matches": [], "summary": _empty_summary(), "target": _index_target_info(index_code, None)}
+
+    target_dt = date.fromisoformat(target_date)
+
+    # Normalize index to date objects
+    def _to_date(val) -> date | None:
+        if isinstance(val, date):
+            return val
+        if hasattr(val, "date"):
+            return val.date()
+        return _parse_date_str(str(val))
+
+    def _parse_date_str(s: str) -> date | None:
+        try:
+            return date.fromisoformat(s[:10])
+        except (ValueError, TypeError):
+            return None
+
+    idx_dates = [_to_date(d) for d in enriched.index]
+    # Find the index position for target_dt
+    target_pos = None
+    for pos, d in enumerate(idx_dates):
+        if d and d <= target_dt:
+            target_pos = pos
+    if target_pos is None or target_pos < window_days:
+        return {"matches": [], "summary": _empty_summary(), "target": _index_target_info(index_code, None)}
+
+    target_bars = enriched.iloc[:target_pos + 1]
+    if len(target_bars) < window_days:
+        return {"matches": [], "summary": _empty_summary(), "target": _index_target_info(index_code, None)}
+
+    target_features = latest_features(target_bars)
+    target_close = float(target_bars["close"].iloc[-1])
+    target_vec = _normalize(_feature_vector(target_features, target_close))
+
+    # 2. 在历史中搜索相似窗口
+    candidates: list[dict[str, Any]] = []
+    # 跳过最近 forward_days 天（没有 forward return 数据）和当前窗口
+    cutoff = target_dt - timedelta(days=forward_days + 10)
+    # 起始位置：至少要有 window_days 天历史
+    for i in range(window_days, target_pos - forward_days):
+        window_end_d = idx_dates[i]
+        if window_end_d is None:
+            continue
+        if window_end_d >= cutoff:
+            break
+
+        window_bars = enriched.iloc[max(0, i - window_days + 1):i + 1]
+        if len(window_bars) < window_days:
+            continue
+
+        try:
+            win_features = latest_features(window_bars)
+            win_close = float(window_bars["close"].iloc[-1])
+            win_vec = _normalize(_feature_vector(win_features, win_close))
+            sim = _euclidean_distance(target_vec, win_vec)
+            if sim >= min_similarity:
+                candidates.append({
+                    "date": window_end_d,
+                    "similarity": round(sim, 4),
+                    "close": win_close,
+                })
+        except Exception:
+            continue
+
+    if not candidates:
+        return {
+            "matches": [],
+            "summary": _empty_summary(),
+            "target": _index_target_info(index_code, target_date),
+        }
+
+    # 3. 排序取 Top-K
+    candidates.sort(key=lambda x: x["similarity"], reverse=True)
+    top_matches = candidates[:top_k]
+
+    # 4. 计算 forward returns
+    for m in top_matches:
+        match_date = m["date"]
+        # 找 match_date 之后 forward_days 天的收盘价
+        match_pos = None
+        for pos, d in enumerate(idx_dates):
+            if d == match_date:
+                match_pos = pos
+                break
+        if match_pos is None:
+            m["forward_return_20d"] = 0.0
+            m["forward_max_gain"] = 0.0
+            m["forward_max_loss"] = 0.0
+            m["match_date"] = str(match_date)
+            m["index_code"] = index_code
+            continue
+
+        match_close = m["close"]
+        if match_pos + forward_days < len(enriched):
+            fwd_close = float(enriched["close"].iloc[match_pos + forward_days])
+            fwd_return = (fwd_close / match_close - 1) * 100
+            fwd_segment = enriched.iloc[match_pos:match_pos + forward_days]
+            fwd_max_gain = (float(fwd_segment["high"].max()) / match_close - 1) * 100
+            fwd_max_loss = (float(fwd_segment["low"].min()) / match_close - 1) * 100
+        else:
+            fwd_return = 0.0
+            fwd_max_gain = 0.0
+            fwd_max_loss = 0.0
+
+        m["forward_return_20d"] = round(fwd_return, 2)
+        m["forward_max_gain"] = round(fwd_max_gain, 2)
+        m["forward_max_loss"] = round(fwd_max_loss, 2)
+        m["match_date"] = str(match_date)
+        m["index_code"] = index_code
+
+    # 5. 适配为通用 match 格式
+    matches = [
+        {
+            "ts_code": index_code,
+            "name": _INDEX_NAMES.get(index_code, index_code),
+            "match_date": m["match_date"],
+            "similarity": m["similarity"],
+            "forward_return_20d": m["forward_return_20d"],
+            "forward_max_gain": m["forward_max_gain"],
+            "forward_max_loss": m["forward_max_loss"],
+        }
+        for m in top_matches
+    ]
+
+    summary = _summarize(matches)
+    return {
+        "matches": matches,
+        "summary": summary,
+        "target": _index_target_info(index_code, target_date),
+    }
+
+
+# 指数名映射（本地，避免循环导入）
+_INDEX_NAMES: dict[str, str] = {
+    "000001": "上证指数",
+    "399001": "深证成指",
+    "399006": "创业板指",
+    "000688": "科创50",
+    "000300": "沪深300",
+    "000905": "中证500",
+    "000852": "中证1000",
+}
+
+
+def _index_target_info(index_code: str, target_date: str | None) -> dict[str, Any]:
+    return {
+        "ts_code": index_code,
+        "name": _INDEX_NAMES.get(index_code, index_code),
+        "as_of": target_date,
+    }

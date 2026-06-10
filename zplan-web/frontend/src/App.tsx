@@ -8,6 +8,8 @@ import WatchlistPage from './pages/WatchlistPage'
 import MarketPage from './pages/MarketPage'
 import StockDetailPage from './pages/StockDetailPage'
 import DashboardPage from './pages/DashboardPage'
+import ExecutionPage from './pages/ExecutionPage'
+import ForecastPage from './pages/ForecastPage'
 
 function App() {
   return (
@@ -21,6 +23,8 @@ function App() {
           <Route path="/market" element={<MarketPage />} />
           <Route path="/market/:tsCode" element={<StockDetailPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/execution" element={<ExecutionPage />} />
+          <Route path="/forecast" element={<ForecastPage />} />
         </Routes>
       </MainLayout>
     </Layout>

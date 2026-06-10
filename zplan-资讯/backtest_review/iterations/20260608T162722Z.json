@@ -1,0 +1,90 @@
+{
+  "iteration_id": "20260608T162722Z",
+  "created_at_utc": "2026-06-08T16:27:22.796719Z",
+  "phase": "full",
+  "note": "",
+  "pick_run_id": 26,
+  "rule_version": "pick-2026-05-theme",
+  "horizon_days": 5,
+  "top_n": 10,
+  "market": {
+    "ok": true,
+    "effective_date": "2026-06-08",
+    "panel_rows": 5505
+  },
+  "metrics": {
+    "pick_run_id": 26,
+    "fail_rate": 1.0,
+    "fail_count": 10,
+    "pass_count": 0,
+    "pending_count": 0,
+    "mean_rule": 81.23,
+    "mean_llm": 79.25,
+    "mean_delta": -1.98,
+    "mean_fwd_return": -4.21,
+    "llm_worse_than_rule": 0,
+    "tag_counts": {
+      "buy_unreachable": 10,
+      "forward_loss": 7,
+      "momentum_chase": 2
+    }
+  },
+  "review_actions": [
+    {
+      "id": "1",
+      "layer": "strategy",
+      "file": "zplan-选股/config/strategy.yaml → filters.max_ret_20d",
+      "action": "启用或调低 max_ret_20d（如 10），减少过热股进入 Top300",
+      "why": "momentum_chase=2"
+    },
+    {
+      "id": "2",
+      "layer": "strategy",
+      "file": "zplan-选股/config/strategy.yaml → ranking",
+      "action": "试 ranking.mode=blend 且 llm_weight 0.8；或 prompt 要求 close_vs_buy_gap 大时降分",
+      "why": "buy_unreachable=10"
+    },
+    {
+      "id": "3",
+      "layer": "rule_engine",
+      "file": "zplan-共享/src/zplan_shared/features.py → suggested_price_levels",
+      "action": "MA20 折扣 0.98→0.96，或增加 actionable_price≈close 供 LLM 参考",
+      "why": "建议买价系统性低于现价，导致「买不到」"
+    },
+    {
+      "id": "4",
+      "layer": "strategy",
+      "file": "zplan-选股/config/strategy.yaml → ranking",
+      "action": "确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight",
+      "why": "最终 Top 应由 LLM 分排序，规则只做候选池与约束"
+    },
+    {
+      "id": "5",
+      "layer": "workflow",
+      "file": "重跑 llm-top → llm-eval",
+      "action": "改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate",
+      "why": "旧 run 不会自动应用新 prompt"
+    }
+  ],
+  "report_path": "/Users/richard/my_stock_ai/zplan-资讯/backtest_review/audit_run26_20260608.md",
+  "steps": [
+    "market",
+    "init_rule",
+    "llm_top",
+    "audit"
+  ],
+  "pick_steps": {
+    "init_rule": {
+      "ok": true,
+      "cmd": "init-rule",
+      "stdout_tail": "规则分已写入 stock_rule_scores：as_of=2026-06-08 共 4539 只（预筛 5090，有效指标 4539）rule_version=pick-2026-06-anti-chase\n下一步：main.py llm-top --top 300\n",
+      "stderr_tail": ""
+    },
+    "llm_top": {
+      "ok": true,
+      "cmd": "llm-top",
+      "stdout_tail": "\n规则分 Top201 → LLM 简评（as_of=2026-06-08）\n\n  1 恒星科技     002132 规则=76.7 LLM=— 关注\n  2 浙江众成     002522 规则=72.8 LLM=— 关注\n  3 长江通信     600345 规则=69.7 LLM=— 关注\n  4 北京君正     300223 规则=68.1 LLM=— 关注\n  5 依顿电子     603328 规则=67.6 LLM=— 关注\n  6 中国稀土     000831 规则=67.1 LLM=— 关注\n  7 吉林碳谷     920077 规则=67.1 LLM=— 关注\n  8 阳谷华泰     300121 规则=67.1 LLM=— 关注\n  9 金信诺      300252 规则=69.2 LLM=— 观望\n 10 盛路通信     002446 规则=65.5 LLM=— 关注\n 11 东方通信     600776 规则=65.5 LLM=— 关注\n 12 华特气体     688268 规则=65.5 LLM=— 关注\n 13 万德斯      688178 规则=65.5 LLM=— 关注\n 14 莱赛激光     920363 规则=65.5 LLM=— 关注\n 15 百花医药     600721 规则=65.4 LLM=— 关注\n 16 友车科技     688479 规则=68.1 LLM=— 关注\n 17 烽火通信     600498 规则=65.0 LLM=— 关注\n 18 嘉欣丝绸     002404 规则=65.0 LLM=— 关注\n 19 征和工业     003033 规则=65.0 LLM=— 关注\n 20 沃顿科技     000920 规则=65.0 LLM=— 关注\n 21 隆利科技     300752 规则=68.7 LLM=— 观望\n 22 晶赛科技     920981 规则=64.5 LLM=— 关注\n 23 华工科技     000988 规则=64.0 LLM=— 关注\n 24 法本信息     300925 规则=64.0 LLM=— 观望\n 25 易普力      002096 规则=63.5 LLM=— 关注\n 26 津投城开     600322 规则=63.5 LLM=— 关注\n 27 华维设计     920427 规则=67.1 LLM=— 观望\n 28 湖南发展     000722 规则=62.9 LLM=— 关注\n 29 高能环境     603588 规则=62.9 LLM=— 关注\n 30 中工国际     002051 规则=62.9 LLM=— 关注\n... 另有 171 只，见 --show-run\n",
+      "stderr_tail": "已入库 run_id=106（main.py --show-run 106）\n"
+    }
+  }
+}

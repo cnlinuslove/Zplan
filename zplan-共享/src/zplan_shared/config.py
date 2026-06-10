@@ -206,6 +206,9 @@ HK_SNAPSHOT_PER_SYMBOL_ENABLED = os.getenv("HK_SNAPSHOT_PER_SYMBOL_ENABLED", "fa
 # 港股市场健康检查最大陈旧天数
 HK_MAX_STALE_DAYS = int(os.getenv("HK_MAX_STALE_DAYS", "3"))
 
+# ── 大盘预测验证阈值 ──
+FORECAST_VERIFY_THRESHOLD_PCT = float(os.getenv("FORECAST_VERIFY_THRESHOLD_PCT", "0.3"))
+
 # ── 筹码峰 (CYQ) 配置 ──
 CYQ_WORKERS = int(os.getenv("CYQ_WORKERS", "6"))
 CYQ_RATE_LIMIT = float(os.getenv("CYQ_RATE_LIMIT", "2.0"))

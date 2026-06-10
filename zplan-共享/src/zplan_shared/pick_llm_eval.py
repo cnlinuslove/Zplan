@@ -38,7 +38,7 @@ FAIL_TAG_LABELS: dict[str, str] = {
 # 港股动量阈值（无涨跌停，20日涨幅波动更大）
 _HK_MOMENTUM_RET20_THRESHOLD = 15.0
 _HK_BUY_GAP_FAIL_PCT = 5.0
-_HK_NEAR_HIGH_THRESHOLD = 0.95
+_HK_NEAR_HIGH_THRESHOLD = 95.0
 
 
 def _market_thresholds(market: str) -> dict[str, float]:
@@ -52,7 +52,7 @@ def _market_thresholds(market: str) -> dict[str, float]:
     return {
         "momentum_ret20_threshold": 8.0,
         "buy_gap_fail_pct": 3.0,
-        "near_high_threshold": 0.92,
+        "near_high_threshold": 90.0,
     }
 
 GENERIC_BULLISH = (
@@ -181,14 +181,31 @@ def diagnose_entry(
         elif abs(fwd_ret) < 0.3:
             tags.append("forward_flat")
 
+    # 最新行情（当前状态）
+    latest_close = None
+    latest_date = None
+    latest_pct_chg = None
+    if as_of and entry.ts_code:
+        bars2 = get_bars(entry.ts_code, market=market)
+        if not bars2.empty:
+            idx2 = pd.DatetimeIndex(pd.to_datetime(bars2.index)).normalize()
+            bars2.index = idx2
+            after_as_of = bars2[bars2.index >= pd.Timestamp(as_of)]
+            if not after_as_of.empty:
+                last = after_as_of.iloc[-1]
+                latest_close = float(last["close"])
+                latest_date = str(last.name.date()) if hasattr(last.name, 'date') else str(last.name)[:10]
+                latest_pct_chg = float(last["pct_chg"]) if "pct_chg" in after_as_of.columns and pd.notna(last.get("pct_chg")) else None
+
     if rec in BULLISH_RECS and len([t for t in tags if t not in ("no_forward_data",)]) >= 2:
         tags.append("over_recommendation")
 
+    # near_60d_high 不单独判 fail：高位不是原罪，需配合其他风险标签
+    # 仅 momentum_chase / score_inflation / buy_unreachable / generic_bullish / over_recommendation 可独立判 fail
     pick_time_fail = any(
         t in tags
         for t in (
             "momentum_chase",
-            "near_60d_high",
             "score_inflation",
             "buy_unreachable",
             "generic_bullish",
@@ -221,6 +238,7 @@ def diagnose_entry(
         "rule_score": rule_s,
         "score_delta": delta,
         "ret_20d_at_pick": ret_20d,
+        "high_60d_pct": high_60d_pct,
         "close_vs_buy_gap_pct": gap,
         "return_from_close_pct": fwd_ret,
         "forward_status": fwd_status,
@@ -230,6 +248,9 @@ def diagnose_entry(
         "recommendation": rec,
         "predicted_buy": buy,
         "close_at_pick": close,
+        "latest_close": latest_close,
+        "latest_date": latest_date,
+        "latest_pct_chg": latest_pct_chg,
     }
 
 
@@ -379,7 +400,7 @@ def build_optimization_map(
 
     if tag_counts.get("near_60d_high", 0) >= max(2, n * 0.3):
         prompt.append("简评 prompt：high_60d_pct>0.9 时须提示「接近阶段高点」，降分或观望")
-        rule_engine.append("technical：high_60d_pct>0.92 时 tech_score -= 8")
+        rule_engine.append("technical：high_60d_pct>0.90 时 rule_score -= 8")
 
     if tag_counts.get("over_recommendation", 0) >= max(2, n * 0.3):
         prompt.append(
@@ -488,19 +509,66 @@ def format_llm_eval_report(result: dict[str, Any]) -> str:
     if s.get("fail_rate") is not None:
         lines.append(f"- 失败率：**{s['fail_rate']:.0%}**")
 
+    lines.extend(["", "## 💰 收益概览"])
+    entries = result.get("entries") or []
+    fwd_rets = [e.get("return_from_close_pct") for e in entries if e.get("return_from_close_pct") is not None]
+    if fwd_rets:
+        win_n = sum(1 for r in fwd_rets if r > 0)
+        loss_n = sum(1 for r in fwd_rets if r < -0.5)
+        avg_ret = sum(fwd_rets) / len(fwd_rets)
+        lines.append(f"- {len(fwd_rets)} 只有数据：🟢 盈利 **{win_n}** | 🔴 亏损 **{loss_n}** | 均收益 **{avg_ret:+.2f}%**")
+        lines.append(f"- 胜率 **{win_n/len(fwd_rets)*100:.0f}%**（收益>0 即算赢）")
+    pending = [e for e in entries if e.get("return_from_close_pct") is None]
+    if pending:
+        lines.append(f"- ⏳ **{len(pending)}** 只尚无 forward 数据")
+
     lines.extend(["", "## 失败标签统计"])
     for tag, cnt in sorted((result.get("tag_counts") or {}).items(), key=lambda x: -x[1]):
         lines.append(f"- `{tag}`（{FAIL_TAG_LABELS.get(tag, tag)}）：**{cnt}** 次")
 
-    lines.extend(["", "## 逐只明细"])
-    for r in result.get("entries") or []:
+    # 按 forward 收益排序
+    sorted_entries = sorted(entries, key=lambda e: -(e.get("return_from_close_pct") or -999))
+
+    lines.extend(["", "## 逐只明细（按收益排序）"])
+    for r in sorted_entries:
         tags = ", ".join(r.get("failure_tags") or []) or "—"
+        close = r.get("close_at_pick")
+        buy = r.get("predicted_buy")
+        high60 = r.get("high_60d_pct")
+        fwd = r.get("return_from_close_pct")
+        latest_close = r.get("latest_close")
+        latest_pct = r.get("latest_pct_chg")
+
+        close_s = f"¥{close:.2f}" if close is not None else "?"
+        buy_s = f"¥{buy:.2f}" if buy is not None else "?"
+        high60_s = f"{float(high60):.1f}%" if high60 is not None else "?"
+
+        # 买入折扣
+        if close is not None and buy is not None and buy != 0:
+            discount = (close - buy) / buy * 100
+            discount_s = f"（折{discount:.1f}%）"
+        else:
+            discount_s = ""
+
+        # 收益图标
+        if fwd is not None:
+            icon = "🟢" if fwd > 0 else ("🔴" if fwd < -0.5 else "⚪")
+            fwd_s = f"{icon} {fwd:+.2f}%"
+        else:
+            fwd_s = "⏳ 待验"
+
         lines.append(
             f"- **#{r.get('rank')} {r.get('name')} ({r.get('ts_code')})** "
-            f"verdict={r.get('verdict')} | LLM {r.get('llm_score')} vs 规则 {r.get('rule_score')} "
-            f"| ret20={r.get('ret_20d_at_pick')}% | 收盘/买价 gap={r.get('close_vs_buy_gap_pct')}% "
-            f"| fwd={r.get('return_from_close_pct')}%"
+            f"{fwd_s} | 现价{close_s} 建议买{buy_s}{discount_s}"
         )
+        lines.append(
+            f"  - LLM{r.get('llm_score')}/规则{r.get('rule_score')} "
+            f"| ret20={r.get('ret_20d_at_pick')}% | 60日高位={high60_s} "
+            f"| gap={r.get('close_vs_buy_gap_pct')}%"
+        )
+        if latest_close is not None:
+            latest_pct_s = f"（{latest_pct:+.1f}%）" if latest_pct is not None else ""
+            lines.append(f"  - 最新价 ¥{latest_close:.2f}{latest_pct_s} · 日期 {r.get('latest_date', '?')}")
         lines.append(f"  - 推荐：{r.get('recommendation')} | 标签：{tags}")
         if r.get("llm_trend"):
             lines.append(f"  - LLM：{r.get('llm_trend')[:80]}")

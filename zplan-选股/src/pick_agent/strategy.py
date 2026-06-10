@@ -49,6 +49,7 @@ class PickStrategy:
     ranking_rule_weight: float = 0.25
     llm_risk_penalty: float = 8.0
     resort_after_llm: bool = True
+    penalty_weights: dict[str, Any] = field(default_factory=dict)
     # 行业分散
     max_per_industry: int = 0
     final_max_per_industry: int = 0
@@ -70,6 +71,7 @@ def load_strategy(path: Path | str | None = None) -> PickStrategy:
     rule_init = data.get("rule_init") or {}
     ranking = data.get("ranking") or {}
     diversification = data.get("diversification") or {}
+    penalty_weights = data.get("penalty_weights") or {}
 
     return PickStrategy(
         version=str(data.get("version", "1")),
@@ -109,6 +111,7 @@ def load_strategy(path: Path | str | None = None) -> PickStrategy:
         max_per_industry=int(diversification.get("max_per_industry", 0)),
         final_max_per_industry=int(diversification.get("final_max_per_industry", 0)),
         min_industries=int(diversification.get("min_industries", 0)),
+        penalty_weights=dict(penalty_weights),
         raw=data,
     )
 

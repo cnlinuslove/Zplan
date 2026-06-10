@@ -21,7 +21,7 @@ filters:
   min_total_mv: null
   max_total_mv: null
   max_ret_20d: 3.0    # 回测验证：>3% 追高风险显著上升，收紧过滤
-  max_high_60d_pct: 0.90  # 接近 60 日高点 >90% 剔除（near_60d_high=10/10 回测验证）
+  max_high_60d_pct: 90    # 接近 60 日高点 >90% 剔除（near_60d_high=10/10 回测验证）
   # ── 筹码峰（灰度开关，默认关闭）──
   enable_chip_factors: true     # 是否启用筹码峰因子（需 daily_chip 表有数据）
   min_concentration_90: null     # 最低 90% 集中度过滤（null=不启用，建议 0.05~0.3）
@@ -73,3 +73,123 @@ ranking:
   rule_weight: 0.20
   llm_risk_penalty: 5.0    # 适度惩罚（不宜过大，避免 LLM 不敢给分）
   resort_after_llm: true   # LLM 简评后按最终分重排再写入 rank
+
+# ── 处罚/奖励权重（可配置，支持 A/B 校准）─────────────────────
+# 每个值都可独立调整，由 penalty_calibrate.py 根据历史数据验证后建议最优值。
+penalty_weights:
+  risk_flags:
+    追高风险(涨幅过高): 5.0
+    量价背离(缩量上涨): 4.0
+    接近阶段高点: 3.0
+    超买区域(KDJ/RSI): 3.0
+    监管/减持风险: 6.0
+    基本面恶化: 5.0
+    题材退潮: 4.0
+  positive_flags:
+    多题材催化: 2.0
+    资讯催化: 2.0
+    温和放量上涨: 2.0
+    买价可成交: 1.0
+  program_constraints:
+    ret20_over_7_min_penalty: 6.0
+    ret20_over_5_min_penalty: 3.0
+    high60_over_95_min_penalty: 3.0
+    divergence_min_penalty: 4.0
+    divergence_ret20_threshold: 3.0
+    divergence_vol_threshold: 0.8
+  recommendation_rules:
+    severe_penalty_downgrade: 10
+    net_risk_high_downgrade: 5
+    positive_upgrade_threshold: 3
+    net_risk_low_upgrade: 2
+
+# ── 出场策略配置 ───────────────────────────────────────────────
+# 选股时每只票会附带一个 ExitPlan；回测可对比不同方案的优劣。
+exit:
+  # 默认方案（所有 pick 的兜底）
+  default_plan: "static"
+
+  # ATR 计算周期（全局默认）
+  atr_period: 14
+
+  # 预制方案
+  plans:
+    # ── 静态止损止盈（现状，向后兼容）──
+    static:
+      type: static
+      display_name: "静态止损止盈"
+      stop_loss_pct: -0.05
+      take_profit_pct: 0.15
+      max_holding_days: 5
+      description: "入场后固定 -5% 止损 / +15% 止盈 / 5 天到期"
+
+    # ── 移动止盈 ──
+    trailing_8pct:
+      type: trailing_stop
+      display_name: "移动止盈 8%"
+      trail_pct: 0.08
+      activate_after_min_return: 0.03   # 浮盈 +3% 后才激活
+      max_holding_days: 20
+      description: "从最高收盘价回撤 8% 触发，需先浮盈 3%"
+
+    trailing_10pct:
+      type: trailing_stop
+      display_name: "移动止盈 10%"
+      trail_pct: 0.10
+      activate_after_min_return: 0.05
+      max_holding_days: 20
+      description: "从最高收盘价回撤 10% 触发，需先浮盈 5%，更宽松"
+
+    # ── ATR 自适应追踪 ──
+    atr_trail_2x:
+      type: atr_trail
+      display_name: "ATR 2× 追踪"
+      atr_multiplier: 2.0
+      atr_period: 14
+      activate_after_min_return: 0.02
+      max_holding_days: 20
+      description: "止损 = 最高收盘价 - 2×ATR(14)，自适应波动"
+
+    atr_trail_2_5x:
+      type: atr_trail
+      display_name: "ATR 2.5× 追踪"
+      atr_multiplier: 2.5
+      atr_period: 14
+      activate_after_min_return: 0.02
+      max_holding_days: 20
+      description: "止损 = 最高收盘价 - 2.5×ATR(14)，更宽松"
+
+    # ── 均线止损 ──
+    ma_stop_20:
+      type: ma_stop
+      display_name: "MA20 止损"
+      ma_period: 20
+      ma_type: simple
+      exit_on_cross_below: true
+      stop_loss_pct: -0.08       # 保底硬止损
+      max_holding_days: 20
+      description: "收盘价跌破 MA20 离场，-8% 硬止损兜底"
+
+    # ── 分批止盈 ──
+    partial_tp:
+      type: partial_take_profit
+      display_name: "分批止盈"
+      levels:
+        - at_pct: 0.08
+          sell_ratio: 0.33       # +8% 卖 1/3
+        - at_pct: 0.15
+          sell_ratio: 0.33       # +15% 再卖 1/3
+        - at_pct: 0.25
+          sell_ratio: 0.34       # +25% 清仓
+      trailing_remainder: true   # 最后一批后剩余仓位启用移动止盈
+      stop_loss_pct: -0.05
+      max_holding_days: 30
+      description: "三级止盈：+8%卖1/3 → +15%卖1/3 → +25%清仓"
+
+  # 参数优化：网格搜索配置
+  optimization:
+    enabled: false
+    sweep_params:
+      trailing_pct: [5, 8, 10, 12, 15]
+      atr_multiplier: [1.5, 2.0, 2.5, 3.0]
+      max_holding_days: [5, 10, 15, 20]

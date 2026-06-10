@@ -1,0 +1,73 @@
+{
+  "generated_at": "20260608T211835Z",
+  "variants": {
+    "baseline": "（无覆盖，使用默认 strategy.yaml）",
+    "strict": "（无覆盖，使用默认 strategy.yaml）"
+  },
+  "test_dates": [
+    "2026-05-21"
+  ],
+  "top_n": 10,
+  "horizon_days": 5,
+  "results": [
+    {
+      "variant": "baseline",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-21",
+      "fail_rate": 1.0,
+      "fail_count": 10,
+      "pass_count": 0,
+      "pending_count": 0,
+      "tag_counts": {
+        "buy_unreachable": 10,
+        "forward_loss": 7,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-21",
+      "description": "（无覆盖，使用默认 strategy.yaml）"
+    },
+    {
+      "variant": "strict",
+      "ok": true,
+      "run_id": 26,
+      "as_of": "2026-05-21",
+      "fail_rate": 1.0,
+      "fail_count": 10,
+      "pass_count": 0,
+      "pending_count": 0,
+      "tag_counts": {
+        "buy_unreachable": 10,
+        "forward_loss": 7,
+        "momentum_chase": 2
+      },
+      "date": "2026-05-21",
+      "description": "（无覆盖，使用默认 strategy.yaml）"
+    }
+  ],
+  "comparison": {
+    "by_variant": [
+      {
+        "variant": "baseline",
+        "mean_fail_rate": 1.0,
+        "std_fail_rate": NaN,
+        "total_runs": 1,
+        "mean_fail_count": 10.0
+      },
+      {
+        "variant": "strict",
+        "mean_fail_rate": 1.0,
+        "std_fail_rate": NaN,
+        "total_runs": 1,
+        "mean_fail_count": 10.0
+      }
+    ],
+    "best_variant": "baseline",
+    "best_mean_fail_rate": 1.0,
+    "win_counts": {
+      "baseline": 1,
+      "strict": 0
+    },
+    "total_dates": 1
+  }
+}

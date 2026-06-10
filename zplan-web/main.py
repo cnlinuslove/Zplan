@@ -101,12 +101,16 @@ from api.market import router as market_router
 from api.watchlist import router as watchlist_router
 from api.picks import router as picks_router
 from api.dashboard import router as dashboard_router
+from api.execution import router as execution_router
+from api.forecast import router as forecast_router
 
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(market_router, prefix="/api/v1")
 app.include_router(watchlist_router, prefix="/api/v1")
 app.include_router(picks_router, prefix="/api/v1")
 app.include_router(dashboard_router, prefix="/api/v1")
+app.include_router(execution_router, prefix="/api/v1")
+app.include_router(forecast_router, prefix="/api/v1")
 
 # 静态资源（JS/CSS 等）—— 必须在 SPA 兜底之前注册
 if FRONTEND_DIST.exists():
@@ -120,12 +124,20 @@ if FRONTEND_DIST.exists():
 else:
     logger.info("前端未构建（frontend/dist/ 不存在），仅 API 可用")
 
+# 图表静态文件（预测 K 线 / MACD / 热力图）
+_charts_dir = ZPLAN_ROOT / "charts"
+if _charts_dir.exists():
+    app.mount("/charts", StaticFiles(directory=str(_charts_dir)), name="charts")
+    logger.info(f"图表静态目录已挂载: {_charts_dir}")
+else:
+    logger.info("图表目录不存在，跳过挂载")
+
 
 # SPA 兜底：非 /api、非 /assets 的 GET → index.html
 @app.get("/{full_path:path}", include_in_schema=False)
 async def serve_spa(full_path: str):
     """把前端路由（/picks, /market/xxx）交给 React Router。"""
-    if full_path.startswith("api/") or full_path.startswith("assets/"):
+    if full_path.startswith("api/") or full_path.startswith("assets/") or full_path.startswith("charts/"):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     index = FRONTEND_DIST / "index.html"
     if index.exists():

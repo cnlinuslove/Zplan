@@ -61,6 +61,34 @@ class DailyPrice(Base):
     ingested_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class DailyIndex(Base):
+    """大盘指数日线 OHLCV（上证/深证/创业板/科创50/沪深300/中证500/中证1000）。
+
+    与 ``daily_prices`` 字段对齐，通过 ``index_code`` 区分指数。
+    """
+
+    __tablename__ = "daily_index"
+    __table_args__ = (
+        UniqueConstraint("index_code", "trade_date", name="uq_daily_index_code_date"),
+        Index("ix_daily_index_trade_date", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    index_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    index_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    trade_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    open: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    pct_chg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    turnover_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="akshare_em")
+    ingested_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class DailyFeature(Base):
     """技术指标日频快照（Phase A.3，每票每个交易日一行）。"""
 
@@ -371,6 +399,30 @@ class PickWatchlist(Base):
     last_brief_at_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class UserPosition(Base):
+    """用户持仓追踪（企微个人维度）。"""
+
+    __tablename__ = "user_positions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "ts_code", name="uq_user_position"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    shares: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    buy_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    buy_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    updated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class StockRuleScore(Base):
     """全市场规则引擎打分快照（按交易日 + rule_version + market 唯一）。"""
 
@@ -474,8 +526,35 @@ class PickEntry(Base):
     predicted_target_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     predicted_stop_loss: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     price_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    exit_plan_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True,
+                                                         comment="出场方案模板 key")
+    exit_plan_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True,
+                                                          comment="逐票定制出场方案 JSON")
+    exit_plan_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True,
+                                                            comment="strategy | llm | default")
+    llm_exit_reasoning: Mapped[Optional[str]] = mapped_column(Text, nullable=True,
+                                                              comment="LLM 出场逻辑推理")
     created_at_utc: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, index=True
+    )
+
+
+class ExitPlanDefinition(Base):
+    """预制出场策略模板（可被多个 pick 引用）。"""
+
+    __tablename__ = "exit_plan_definitions"
+    __table_args__ = (
+        UniqueConstraint("plan_key", name="uq_exit_plan_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    rules_json: Mapped[str] = mapped_column(Text, nullable=False,
+                                            comment="JSON: ExitRule 列表序列化")
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow,
     )
 
 
@@ -543,6 +622,67 @@ class PickLlmEvaluation(Base):
     failure_tags_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     llm_trend: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     recommendation: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    evaluated_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class MarketForecast(Base):
+    """大盘+板块预测记录（LLM 生成，盘后自动运行）。
+
+    ``forecast_json`` 存完整 LLM 输出（含证据链），事后回填验证字段。
+    """
+
+    __tablename__ = "market_forecasts"
+    __table_args__ = (
+        UniqueConstraint("as_of_date", name="uq_market_forecast_date"),
+        Index("ix_market_forecast_created", "created_at_utc"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    as_of_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    market_direction: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    direction_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    forecast_json: Mapped[str] = mapped_column(Text, nullable=False)
+    index_charts_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    push_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    actual_direction: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    actual_pct_chg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    direction_correct: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class ForecastEval(Base):
+    """大盘预测多周期验证结果（每预测 + 每 horizon 一行）。
+
+    用于置信度校准、各指数准确率、滚动趋势等回测分析。
+    """
+
+    __tablename__ = "forecast_evals"
+    __table_args__ = (
+        UniqueConstraint("forecast_id", "horizon_days", name="uq_forecast_eval"),
+        Index("ix_forecast_eval_horizon", "horizon_days"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    forecast_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("market_forecasts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 总体方向
+    predicted_direction: Mapped[str] = mapped_column(String(32), nullable=False)
+    actual_direction: Mapped[str] = mapped_column(String(32), nullable=False)
+    direction_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # 各指数明细（JSON）
+    index_results_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 置信度校准
+    predicted_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # 汇总
+    index_correct_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    index_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     evaluated_at_utc: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
@@ -795,6 +935,118 @@ def _migrate_web_chat() -> None:
             )
 
 
+def _migrate_daily_index() -> None:
+    """旧库补建 daily_index 表（指数日线）。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "daily_index" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE daily_index (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        index_code VARCHAR(16) NOT NULL,
+                        index_name VARCHAR(64) NOT NULL DEFAULT '',
+                        trade_date DATE NOT NULL,
+                        open FLOAT,
+                        high FLOAT,
+                        low FLOAT,
+                        close FLOAT,
+                        volume FLOAT,
+                        amount FLOAT,
+                        pct_chg FLOAT,
+                        turnover_rate FLOAT,
+                        source VARCHAR(32) NOT NULL DEFAULT 'akshare_em',
+                        ingested_at DATETIME,
+                        UNIQUE(index_code, trade_date)
+                    )"""
+                )
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_daily_index_trade_date ON daily_index (trade_date)")
+            )
+
+
+def _migrate_market_forecasts() -> None:
+    """旧库补建 market_forecasts 表（大盘预测记录）。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "market_forecasts" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE market_forecasts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        as_of_date DATE NOT NULL,
+                        market_direction VARCHAR(32),
+                        direction_confidence FLOAT,
+                        forecast_json TEXT NOT NULL,
+                        index_charts_json TEXT,
+                        push_sent BOOLEAN NOT NULL DEFAULT 0,
+                        verified_at DATETIME,
+                        actual_direction VARCHAR(32),
+                        actual_pct_chg FLOAT,
+                        direction_correct BOOLEAN,
+                        created_at_utc DATETIME NOT NULL DEFAULT (datetime('now')),
+                        UNIQUE(as_of_date)
+                    )"""
+                )
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_market_forecast_created ON market_forecasts (created_at_utc)")
+            )
+
+
+def _migrate_forecast_evals() -> None:
+    """旧库补建 forecast_evals 表（大盘预测多周期评估）。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "forecast_evals" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE forecast_evals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        forecast_id INTEGER NOT NULL REFERENCES market_forecasts(id) ON DELETE CASCADE,
+                        horizon_days INTEGER NOT NULL,
+                        predicted_direction VARCHAR(32) NOT NULL,
+                        actual_direction VARCHAR(32) NOT NULL,
+                        direction_correct BOOLEAN NOT NULL,
+                        index_results_json TEXT,
+                        predicted_confidence FLOAT NOT NULL DEFAULT 0.0,
+                        index_correct_count INTEGER NOT NULL DEFAULT 0,
+                        index_total INTEGER NOT NULL DEFAULT 0,
+                        evaluated_at_utc DATETIME NOT NULL DEFAULT (datetime('now')),
+                        UNIQUE(forecast_id, horizon_days)
+                    )"""
+                )
+            )
+            conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_forecast_eval_horizon ON forecast_evals (horizon_days)")
+            )
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_daily_prices_phase_a()
@@ -808,6 +1060,10 @@ def init_db() -> None:
     _migrate_web_chat()
     _migrate_concept_product_v2()
     _migrate_pick_ab_fields()
+    _migrate_daily_index()
+    _migrate_market_forecasts()
+    _migrate_forecast_evals()
+    _migrate_exit_strategy()
     _ensure_sqlite_indexes()
     _ensure_news_stock_link_table()
 
@@ -1369,3 +1625,49 @@ def _migrate_pick_ab_fields() -> None:
                 "ON pick_runs (variant_label, trade_date_as_of)"
             )
         )
+
+
+def _migrate_exit_strategy() -> None:
+    """出场策略字段：PickEntry 加 exit_plan 列 + ExitPlanDefinition 表。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    # 1. PickEntry 新列
+    additions = [
+        ("exit_plan_key", "VARCHAR(64)"),
+        ("exit_plan_json", "TEXT"),
+        ("exit_plan_source", "VARCHAR(16)"),
+        ("llm_exit_reasoning", "TEXT"),
+    ]
+    with engine.begin() as conn:
+        existing_cols = {
+            row[1]
+            for row in conn.execute(
+                text("PRAGMA table_info(pick_entries)")
+            ).fetchall()
+        }
+        if existing_cols:
+            for col, ddl in additions:
+                if col not in existing_cols:
+                    conn.execute(
+                        text(f"ALTER TABLE pick_entries ADD COLUMN {col} {ddl}")
+                    )
+    # 2. ExitPlanDefinition 表（create_all 会处理新建，这里补已有库）
+    with engine.begin() as conn:
+        existing_tables = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "exit_plan_definitions" not in existing_tables:
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS exit_plan_definitions ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  plan_key VARCHAR(64) NOT NULL UNIQUE,"
+                "  display_name VARCHAR(128) NOT NULL,"
+                "  rules_json TEXT NOT NULL,"
+                "  description TEXT,"
+                "  created_at_utc DATETIME NOT NULL DEFAULT (datetime('now'))"
+                ")"
+            ))

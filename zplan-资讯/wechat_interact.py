@@ -10,12 +10,14 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import desc, select
 
 logger = logging.getLogger(__name__)
+
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 from agents.info_query import answer_info_question
 from agents.news_agent import get_history_payload
@@ -28,6 +30,7 @@ from wechat_limits import WECHAT_TEXT_MAX_BYTES, truncate_wechat_utf8
 from zplan_shared.models import (
     ChatHistory,
     DailyPrice,
+    MarketForecast,
     PickEntry,
     PickRun,
     SessionLocal,
@@ -43,6 +46,45 @@ _QUESTION_MARKERS = re.compile(
 _IGNORED_SIMPLE = frozenset({
     "帮助", "最新", "7天", "列表", "退出", "结束", "help", "latest",
 })
+
+# 批量分析检测：识别 "分析 XXX · 分析 YYY" 或 "分析 XXX 分析 YYY" 等多票请求
+_BATCH_PICK_RE = re.compile(
+    r"(?:分析|选股|研报|打分)\s*[：:\s]*([一-鿿]{2,6}|[0368]\d{5})",
+    re.IGNORECASE,
+)
+_BATCH_SEPARATOR = re.compile(r"\s*[·•,，、\n]+\s*")
+
+
+def _split_batch_queries(text: str) -> list[str]:
+    """识别批量分析请求，返回各个股票名/代码列表。至少 2 个才算批量。"""
+    raw = text.strip()
+
+    # 方法1: 先尝试匹配所有 "指令词 + 股票名" 对
+    matches = list(_BATCH_PICK_RE.finditer(raw))
+    if len(matches) >= 2:
+        return [m.group(1) for m in matches]
+
+    # 方法2: 如果包含分隔符，按分隔符拆分后看每段是否像股票名
+    if _BATCH_SEPARATOR.search(raw):
+        parts = _BATCH_SEPARATOR.split(raw)
+        queries = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            # 剥离可能的指令词前缀
+            sub_m = _BATCH_PICK_RE.search(part)
+            if sub_m:
+                queries.append(sub_m.group(1))
+            else:
+                code_m = _STOCK_CODE_RE.match(part)
+                name_m = re.match(r"^[一-鿿]{2,6}$", part)
+                if code_m or name_m:
+                    queries.append(part)
+        if len(queries) >= 2:
+            return queries
+
+    return []
 
 
 def _looks_like_stock_query(text: str) -> bool:
@@ -65,9 +107,20 @@ HELP_TEXT = """【Z-Plan】
 · 最新 / 7天 → 资讯摘要
 · 直接提问 → 北向资金、美联储等
 · 筛选 脑机接口 → 题材成份股
+· 大盘预测 / 市场预测 → 多空研判 + 板块方向
+
+选股与对比：
+· 选股清单 → 今日推荐列表
+· 对比 爱普股份 和 平安银行 → 两只股票并排比较
+
+自选与持仓（NEW）：
+· 加入自选 爱普股份 → 添加到关注清单
+· 我的自选 → 查看自选列表
+· 买入 爱普股份 1000股 12.50 → 记录持仓
+· 卖出 爱普股份 → 移除持仓
+· 我的持仓 → 查看持仓 + 盈亏估算
 
 其它：
-· 选股清单 → 今日推荐列表
 · 列表 → 全部 topic
 · 帮助 → 本说明
 · 退出 → 结束当前会话窗口"""
@@ -137,6 +190,91 @@ def _pick_top_concepts(session, ts_code: str, limit: int = 3) -> str:
     return " · ".join(concepts[:limit])
 
 
+# ── 大盘预测 ──────────────────────────────────────────────
+
+def get_latest_forecast() -> dict[str, Any]:
+    """最新大盘预测：综合方向 + 多空对照 + 选股参考。"""
+    init_db()
+    with SessionLocal() as session:
+        mf = session.execute(
+            select(MarketForecast)
+            .order_by(desc(MarketForecast.created_at_utc))
+            .limit(1)
+        ).scalars().first()
+
+        if not mf:
+            return _reply_payload(
+                "forecast",
+                "暂无大盘预测数据。\n请先运行 market_forecast.py。",
+            )
+
+        try:
+            f = json.loads(mf.forecast_json) if isinstance(mf.forecast_json, str) else mf.forecast_json
+        except (json.JSONDecodeError, TypeError):
+            return _reply_payload("forecast", "预测数据格式错误，请稍后重试。")
+
+        md = f.get("market_direction", {})
+        direction_map = {"bullish": "🟢 看涨", "bearish": "🔴 看跌", "range-bound": "🟡 震荡"}
+        direction_label = direction_map.get(md.get("direction", ""), md.get("direction", "?"))
+
+        lines = [
+            f"🔮 大盘预测 · {mf.as_of_date}",
+            "",
+            f"**综合判断: {direction_label}**（置信度 {md.get('confidence', '?')}%）",
+            f"> {md.get('reasoning', '')}",
+            "",
+        ]
+
+        # 多空对照
+        evidence = md.get("evidence") or []
+        counter = md.get("counter_evidence") or []
+        if evidence or counter:
+            lines.append("**⚖️ 多空对照**")
+            for e in evidence:
+                lines.append(f"🔺 [{e.get('type', '')}] {e.get('signal', '')}: {e.get('value', '')}")
+            for c in counter:
+                lines.append(f"🔻 {c}")
+            lines.append("")
+
+        # 指数全景
+        ix_forecasts = f.get("index_forecasts") or []
+        if ix_forecasts:
+            bullish_ix = [ix for ix in ix_forecasts if ix.get("direction") == "偏多"]
+            bearish_ix = [ix for ix in ix_forecasts if ix.get("direction") == "偏空"]
+            neutral_ix = [ix for ix in ix_forecasts if ix.get("direction") == "震荡"]
+            lines.append(
+                f"🏛️ 指数: 🔺偏多{len(bullish_ix)}只 ➖震荡{len(neutral_ix)}只 🔻偏空{len(bearish_ix)}只"
+            )
+            for ix in ix_forecasts:
+                emoji = {"偏多": "🔺", "偏空": "🔻", "震荡": "➖"}.get(ix.get("direction", ""), "❓")
+                sp = ix.get("similar_patterns_verdict", "")
+                sp_str = f" · 历史相似: {sp}" if sp else ""
+                lines.append(f"  {emoji} {ix.get('name', '')}: {ix.get('direction', '')}（置信{ix.get('confidence', '?')}%）{sp_str}")
+            lines.append("")
+
+        # 板块
+        sectors = f.get("sector_calls") or []
+        if sectors:
+            lines.append("🏭 板块判断:")
+            for s in sectors:
+                emoji = {"看多": "🟢", "看淡": "🔴", "中性": "⚪"}.get(s.get("direction", ""), "")
+                lines.append(f"  {emoji} {s.get('sector', '')}: {s.get('reasoning', '')[:60]}")
+            lines.append("")
+
+        # 选股参考
+        dir_signal = md.get("direction", "")
+        pick_guide = {
+            "bullish": "🟢 偏多 → 可积极选股，重点看偏多指数对应标的",
+            "bearish": "🔴 偏空 → 降低仓位防守，关注逆势板块",
+            "range-bound": "🟡 震荡 → 控制仓位精选个股，不追高",
+        }.get(dir_signal, "等待更明确信号")
+        lines.append(f"📋 选股参考: {pick_guide}")
+        lines.append("")
+        lines.append("💡 发送「选股清单」查看今日推荐")
+
+        return _reply_payload("forecast", "\n".join(lines))
+
+
 # ── 选股清单 ──────────────────────────────────────────────
 
 def get_latest_picks() -> dict[str, Any]:
@@ -196,13 +334,14 @@ def get_latest_picks() -> dict[str, Any]:
             pct_map = {r.ts_code: r.pct_chg for r in rows}
             close_map = {r.ts_code: r.close for r in rows}
 
-    as_of = (
+    data_date = (
         run.trade_date_as_of.strftime("%m-%d")
         if run.trade_date_as_of
         else run.created_at_utc.strftime("%m-%d %H:%M")
     )
-    lines = [f"【最新选股 · {as_of}】"]
-    lines.append(f"规则 {run.rule_version}" + (" · LLM" if run.llm_enabled else ""))
+    today_str = datetime.now(BEIJING_TZ).strftime("%m-%d")
+    lines = [f"【今日选股 TOP10】{today_str}"]
+    lines.append(f"数据截止 {data_date}  |  规则 {run.rule_version}" + (" · LLM" if run.llm_enabled else ""))
     lines.append("")
 
     for e in entries:
@@ -242,8 +381,8 @@ def get_latest_picks() -> dict[str, Any]:
     lines.append("点击下方按钮，或发送「分析 股票名」查看详情")
 
     card = _make_card(
-        title=f"最新选股 · {as_of}",
-        desc=f"Top {len(entries)} · 规则 {run.rule_version}",
+        title=f"今日选股 TOP10 · {today_str}",
+        desc=f"数据截止 {data_date} · Top {len(entries)} · 规则 {run.rule_version}",
         buttons=[
             {"text": "刷新清单", "style": 1, "key": "picklist"},
             {"text": "分析某股", "style": 0, "key": "picklist_analyze"},
@@ -263,9 +402,49 @@ def _normalize_user_text(message: str) -> str:
     return raw or (message or "").strip()
 
 
+# ── 上下文功能提示 ──────────────────────────────────────────
+
+_HINT_MAP: dict[str, str] = {
+    "pick": "💡 新功能：发送「加入自选」收藏 | 「对比 两只股票」横向比较 | 「买入 1000股 价格」记录持仓",
+    "pick_symbol": "💡 新功能：发送「加入自选」收藏 | 「对比 两只股票」横向比较 | 「买入 1000股 价格」记录持仓",
+    "pick_screen": "💡 发送「选股 名称」查看个股深度分析 | 「对比 A 和 B」并排比较",
+    "picks_list": "💡 发送「选股 名称」查看个股分析 | 「对比 A 和 B」横向比较两股",
+    "forecast": "💡 发送「选股清单」看今日推荐 | 直接发股票名深度分析 | 「筛选 题材名」选标的",
+    "watchlist": "💡 发送「选股 名称」分析自选股 | 「我的持仓」查看仓位 | 「对比 A B」比较",
+    "watch_add": "💡 发送「选股」分析该股 | 「我的持仓」记录买入",
+    "positions": "💡 发送「选股 名称」分析持仓股 | 「对比 A B」横向比较 | 「加入自选 XX」扩展关注",
+    "buy": "💡 发送「选股」跟踪分析 | 「对比」比较 | 「我的持仓」查看全部",
+    "sell": "💡 发送「选股 名称」发掘新标的 | 「我的自选」管理关注清单",
+    "compare": "💡 发送「加入自选 XX」收藏 | 「买入 XX 1000股 价格」记录持仓",
+    "brain_chat": "💡 新功能：持仓追踪、股票对比、自选管理。发送「帮助」查看全部功能",
+    "help": "💡 新上线：持仓追踪、股票对比、多轮追问。选股报告后可追问「目标价合理吗？」",
+    "history_latest": "💡 发送「选股清单」看推荐 | 直接提问如「北向资金最近走势如何」",
+    "topic_list": "💡 发送「查 北向资金」按 topic 搜索 | 「最新」看今日快讯",
+}
+
+# 不追加提示的意图（报错、会话管理等）
+_HINT_SKIP = frozenset({
+    "empty", "session_required", "session_end", "pick_error",
+    "pick_timeout", "pick_skip", "watch_error", "watchlist_error",
+    "positions_error", "buy_error", "sell_error", "compare_error",
+    "button_unknown", "picklist_analyze", "info_query",
+})
+
+
+def _hint_for(intent: str, name: str = "") -> str:
+    """根据意图返回单行功能提示，空串表示无提示。"""
+    if intent in _HINT_SKIP:
+        return ""
+    return _HINT_MAP.get(intent, "")
+
+
 def _reply_payload(
-    intent: str, text: str, *, card: dict[str, Any] | None = None, **extra: Any
+    intent: str, text: str, *, card: dict[str, Any] | None = None,
+    hint_name: str = "", **extra: Any
 ) -> dict[str, Any]:
+    hint = _hint_for(intent, name=hint_name)
+    if hint and hint not in text:
+        text = text + "\n\n" + hint
     result: dict[str, Any] = {
         "ok": True,
         "intent": intent,
@@ -276,6 +455,68 @@ def _reply_payload(
     if card:
         result["reply_template_card"] = card
     return result
+
+
+def _capture_pick_context(chat_id: str | None, result: dict[str, Any]) -> None:
+    """记录选股结果到会话上下文，供后续多轮追问使用。"""
+    if not chat_id:
+        return
+    ts = result.get("ts_code")
+    name = result.get("name")
+    if ts:
+        from chat_session import set_current_stock, set_last_intent
+
+        set_current_stock(chat_id, ts, name or ts)
+        set_last_intent(chat_id, result.get("intent", "pick"))
+
+
+def _resolve_watch_symbol(query: str) -> tuple[str, str]:
+    """解析自选股票名 → (ts_code, name)。"""
+    from agents.user_position import _resolve_symbol
+    return _resolve_symbol(query)
+
+
+def _handle_button_click(key: str) -> dict[str, Any]:
+    """处理模板卡片按钮点击。key 格式: action|code|name 或 action。"""
+    parts = key.split("|")
+    action = parts[0]
+    code = parts[1] if len(parts) >= 2 else ""
+    name = parts[2] if len(parts) >= 3 else code
+
+    if action == "analyze" and code:
+        pick = try_handle_pick(f"选股 {name or code}")
+        if pick and pick.get("reply_text"):
+            return _pick_reply(pick, str(pick["reply_text"]))
+        return _reply_payload("pick_error", f"分析 {name or code} 暂不可用，请稍后重试。")
+
+    if action == "news" and code:
+        from agents.info_query import answer_info_question
+        try:
+            result = answer_info_question(f"{name} {code} 最近新闻")
+            return _reply_payload("info_query", result["text"],
+                                  keywords=result.get("keywords"),
+                                  hit_count=result.get("count"))
+        except Exception:
+            return _reply_payload("info_query", f"查询 {name or code} 资讯失败，请稍后重试。")
+
+    if action == "watch" and code:
+        try:
+            from zplan_shared.pick_watchlist import add_watch
+            result = add_watch(name or code)
+            return _reply_payload(
+                "watch_add", f"✅ 已添加 {result['name']}({result['ts_code']}) 到自选清单。\n发送「我的自选」查看全部。",
+                hint_name=result.get("name", ""),
+            )
+        except Exception as e:
+            return _reply_payload("watch_error", f"添加自选失败: {e}")
+
+    if action == "picklist":
+        return get_latest_picks()
+
+    if action == "picklist_analyze":
+        return _reply_payload("picklist_analyze", "请回复股票名或代码进行分析，如「选股 爱普股份」。")
+
+    return _reply_payload("button_unknown", f"按钮操作「{action}」暂不支持。")
 
 
 def _pick_reply(pick: dict[str, Any], text: str) -> dict[str, Any]:
@@ -298,17 +539,86 @@ def _pick_reply(pick: dict[str, Any], text: str) -> dict[str, Any]:
     md_text = _to_pick_markdown(text)
     short_text = truncate_wechat_utf8(text, WECHAT_TEXT_MAX_BYTES)
 
+    # 追加上下文功能提示
+    pick_intent = str(pick.get("intent") or "pick")
+    stock_name = pick.get("name", "")
+    hint = _hint_for(pick_intent, name=stock_name)
+    if hint:
+        short_text = (short_text + "\n\n" + hint) if short_text else short_text
+        md_text = md_text + "\n\n" + hint
+
     result: dict[str, Any] = {
         "ok": True,
-        "intent": str(pick.get("intent") or "pick"),
+        "intent": pick_intent,
         "reply_text": short_text if len(short_text.encode("utf-8")) <= WECHAT_TEXT_MAX_BYTES else "",
         "reply_markdown": md_text,
         "ts_code": pick.get("ts_code"),
+        "name": pick.get("name"),
         "run_id": pick.get("run_id"),
         "chart_path": pick.get("chart_path"),
         "pdf_path": pdf_path,
     }
     return result
+
+
+def _handle_batch_pick(
+    queries: list[str],
+    *,
+    chat_id: str | None = None,
+) -> dict[str, Any] | None:
+    """批量分析多只股票：每只单独生成研报（PDF + 回复），汇总提示。
+
+    每个 query 会走完整的 try_handle_pick → _pick_reply 路径，
+    PDF 通过 webhook 推送，文本回复仅返回汇总提示避免刷屏。
+    """
+    if not queries or len(queries) < 2:
+        return None
+
+    import concurrent.futures
+
+    names: list[str] = []
+    errors: list[str] = []
+
+    def _run_one(q: str) -> tuple[str, str | None]:
+        """返回 (query, error_or_None)。"""
+        pick = try_handle_pick(f"分析 {q}")
+        if pick and pick.get("reply_text"):
+            # _pick_reply 会推送 PDF，我们只需要知道成功
+            _pick_reply(pick, str(pick["reply_text"]))
+            name = pick.get("name") or q
+            return (name, None)
+        elif pick and pick.get("intent") == "pick_error":
+            return (q, pick.get("reply_text", "分析失败"))
+        else:
+            return (q, "无法识别该股票")
+
+    # 顺序执行（避免并发导致 LLM API 限流和 DB 锁竞争）
+    for q in queries:
+        name, err = _run_one(q.strip())
+        if err:
+            errors.append(f"{q}: {err[:60]}")
+        else:
+            names.append(name)
+
+    if not names and errors:
+        return _reply_payload(
+            "batch_pick",
+            f"批量分析全部失败：\n" + "\n".join(errors[:5]),
+        )
+
+    lines = [
+        f"📊 批量研报生成中（{len(names)}/{len(queries)} 只）",
+        "",
+        f"✅ 已生成: {'、'.join(names[:8])}",
+    ]
+    if errors:
+        lines.append(f"⚠️ 失败: {'、'.join(errors[:3])}")
+
+    lines.append("")
+    lines.append("💡 每只股票的完整研报 PDF 正在推送中，请向上翻看")
+    lines.append("> 也可单独发送「分析 股票名」获取单只研报")
+
+    return _reply_payload("batch_pick", "\n".join(lines))
 
 
 def _to_pick_markdown(plain: str) -> str:
@@ -392,7 +702,7 @@ def handle_inbound_text(
         # @ 消息：刷新会话窗口（在 impl 之前，以便 impl 内 session_active 检查生效）
         if mentioned and chat_id:
             is_new_session = touch_session(chat_id)
-        result = _handle_inbound_text_impl(message, mentioned=mentioned, chat_id=chat_id)
+        result = _handle_inbound_text_impl(message, mentioned=mentioned, chat_id=chat_id, user_id=user_id)
         # 新会话追加有效时长提示（智能机器人渠道除外，因平台要求必须 @）
         if is_new_session and result and result.get("reply_text") and channel != "wecom_bot":
             from chat_session import get_session_store
@@ -424,6 +734,7 @@ def _handle_inbound_text_impl(
     *,
     mentioned: bool = False,
     chat_id: str | None = None,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     init_db()
     raw = _normalize_user_text(message)
@@ -440,6 +751,10 @@ def _handle_inbound_text_impl(
         return _reply_payload("help", HELP_TEXT)
 
     low = raw.lower()
+
+    # ── 模板卡片按钮点击 ──
+    if raw.startswith("__btn__"):
+        return _handle_button_click(raw[7:])
 
     # ── 退出会话窗口 ──
     if low in ("退出", "exit", "quit", "结束", "结束会话", "关闭"):
@@ -468,6 +783,106 @@ def _handle_inbound_text_impl(
         body = "\n".join(lines) if lines else "(暂无 topic)"
         return _reply_payload("topic_list", f"【Topic 列表】\n{body}")
 
+    # ── 自选管理 ──
+    if re.match(r"^(加入自选|添加自选|关注)\s+", raw):
+        symbol = re.sub(r"^(加入自选|添加自选|关注)\s+", "", raw).strip()
+        try:
+            from zplan_shared.pick_watchlist import add_watch
+            result = add_watch(symbol)
+            return _reply_payload(
+                "watch_add", f"✅ 已添加 {result['name']}({result['ts_code']}) 到自选清单。\n发送「我的自选」查看全部。",
+                hint_name=result.get("name", ""),
+            )
+        except LookupError as e:
+            return _reply_payload("watch_error", f"❌ {e}")
+        except Exception as e:
+            return _reply_payload("watch_error", f"添加失败: {e}")
+
+    if re.match(r"^(移除自选|删除自选|取消关注)\s+", raw):
+        symbol = re.sub(r"^(移除自选|删除自选|取消关注)\s+", "", raw).strip()
+        try:
+            from zplan_shared.pick_watchlist import remove_watch
+            # resolve first to get name
+            code, name = _resolve_watch_symbol(symbol)
+            ok = remove_watch(code)
+            if ok:
+                return _reply_payload("watch_remove", f"✅ 已从自选移除 {name or code}({code})。")
+            return _reply_payload("watch_remove", f"「{symbol}」不在自选清单中。")
+        except LookupError as e:
+            return _reply_payload("watch_error", f"❌ {e}")
+
+    if low in ("我的自选", "自选列表", "自选", "关注列表"):
+        try:
+            from agents.user_position import format_watchlist_text
+            return _reply_payload("watchlist", format_watchlist_text())
+        except Exception as e:
+            return _reply_payload("watchlist_error", f"获取自选失败: {e}")
+
+    # ── 持仓管理 ──
+    if re.match(r"^(我的持仓|持仓|持仓情况|仓位|我的仓位)$", raw):
+        if not user_id:
+            return _reply_payload("positions", "持仓功能需要用户身份。请在企微中 @我 使用。")
+        try:
+            from agents.user_position import format_positions_text
+            return _reply_payload("positions", format_positions_text(user_id))
+        except Exception as e:
+            return _reply_payload("positions_error", f"获取持仓失败: {e}")
+
+    buy_parsed = None
+    try:
+        from agents.user_position import parse_buy_command
+        buy_parsed = parse_buy_command(raw)
+    except ImportError:
+        pass
+    if buy_parsed:
+        if not user_id:
+            return _reply_payload("positions", "持仓功能需要用户身份。请在企微中 @我 使用。")
+        try:
+            from agents.user_position import add_position
+            result = add_position(
+                user_id, buy_parsed["symbol"],
+                buy_parsed["shares"], buy_parsed["price"],
+                notes=buy_parsed.get("notes"),
+            )
+            act = "已更新" if result.get("action") == "updated" else "已记录"
+            price_str = f" @¥{result['buy_price']:.2f}" if result.get("buy_price") else ""
+            return _reply_payload(
+                "buy", f"✅ {act} {result['name']}({result['ts_code']}) "
+                f"{result['shares']}股{price_str}。\n发送「我的持仓」查看。",
+                hint_name=result.get("name", ""),
+            )
+        except LookupError as e:
+            return _reply_payload("buy_error", f"❌ {e}")
+        except Exception as e:
+            return _reply_payload("buy_error", f"买入记录失败: {e}")
+
+    sell_symbol = None
+    try:
+        from agents.user_position import parse_sell_command
+        sell_symbol = parse_sell_command(raw)
+    except ImportError:
+        pass
+    if sell_symbol:
+        if not user_id:
+            return _reply_payload("positions", "持仓功能需要用户身份。请在企微中 @我 使用。")
+        try:
+            from agents.user_position import remove_position
+            info = remove_position(user_id, sell_symbol)
+            if info:
+                return _reply_payload(
+                    "sell", f"✅ 已移除 {info['name']}({info['ts_code']}) {info['shares']}股。",
+                    hint_name=info.get("name", ""),
+                )
+            return _reply_payload("sell", f"「{sell_symbol}」不在你的持仓中。")
+        except LookupError as e:
+            return _reply_payload("sell_error", f"❌ {e}")
+        except Exception as e:
+            return _reply_payload("sell_error", f"卖出记录失败: {e}")
+
+    # ── 大盘预测 ──
+    if low in ("大盘预测", "大盘", "预测", "市场预测", "forecast", "market forecast"):
+        return get_latest_forecast()
+
     # ── 选股清单 ──
     if low in ("选股清单", "最新选股", "今日推荐", "top picks", "top picks!", "推荐"):
         return get_latest_picks()
@@ -476,7 +891,9 @@ def _handle_inbound_text_impl(
     if re.match(r"^(筛选|题材|概念)\s*[：:\s]*(.+)", raw, re.IGNORECASE):
         pick = try_handle_pick(raw)
         if pick and pick.get("reply_text"):
-            return _pick_reply(pick, str(pick["reply_text"]))
+            result = _pick_reply(pick, str(pick["reply_text"]))
+            _capture_pick_context(chat_id, result)
+            return result
 
     # ── Topic 查询 ──
     m = re.match(r"查\s*(\S+)", raw)
@@ -493,34 +910,70 @@ def _handle_inbound_text_impl(
                 count=payload["count"],
             )
 
+    # ── 股票对比 ──
+    compare_pair = None
+    try:
+        from agents.compare import parse_compare_command
+        compare_pair = parse_compare_command(raw)
+    except ImportError:
+        pass
+    if compare_pair:
+        try:
+            from agents.compare import compare_two
+            result = compare_two(compare_pair[0], compare_pair[1])
+            return _reply_payload(
+                result.get("intent", "compare"),
+                result["reply_text"],
+            )
+        except Exception as e:
+            return _reply_payload("compare_error", f"对比失败: {e}")
+
+    # ── 批量分析：识别 "分析 A · 分析 B · 分析 C" ──
+    batch_queries = _split_batch_queries(raw)
+    if batch_queries:
+        result = _handle_batch_pick(batch_queries, chat_id=chat_id)
+        if result:
+            return result
+
     # ── 选股分析（直接路由，绕过 Brain 减少一次 LLM 往返）───
     # 显式选股前缀：选股/分析/打分/研报/查股/评分 + 标的
     if re.match(r"^(选股|打分|分析|研报|评股|查股|评分)\s*[：:\s]", raw, re.IGNORECASE):
         pick = try_handle_pick(raw)
         if pick and pick.get("reply_text"):
-            return _pick_reply(pick, str(pick["reply_text"]))
+            result = _pick_reply(pick, str(pick["reply_text"]))
+            _capture_pick_context(chat_id, result)
+            return result
 
     # 简单股票名/代码 → 直接深度分析（误判由 try_handle_pick 返回 None 兜底）
     if _looks_like_stock_query(raw):
         pick = try_handle_pick(raw)
         if pick and pick.get("reply_text"):
-            return _pick_reply(pick, str(pick["reply_text"]))
+            result = _pick_reply(pick, str(pick["reply_text"]))
+            _capture_pick_context(chat_id, result)
+            return result
 
     # ── Brain 驱动的统一对话 ──
     # 带多轮对话记忆：读取历史 → Brain → 保存 Q&A
     try:
         from agents.brain import get_brain
-        from chat_session import add_message, get_history
+        from chat_session import add_message, get_history, get_current_stock
 
         brain = get_brain()
         hist = get_history(chat_id) if chat_id else None
-        chat_result = brain.ask(raw, history=hist)
+        cur_stock = get_current_stock(chat_id) if chat_id else None
+        chat_result = brain.ask(raw, history=hist, current_stock=cur_stock)
 
         # 保存本轮对话到会话历史
         reply_text = chat_result.get("reply_markdown") or chat_result.get("reply_text", "")
         if chat_id and reply_text:
             add_message(chat_id, "user", raw)
             add_message(chat_id, "assistant", reply_text)
+
+        # 若 Brain 返回了具体股票结果，更新会话上下文
+        if chat_id and chat_result.get("ts_code"):
+            from chat_session import set_current_stock
+            set_current_stock(chat_id, chat_result["ts_code"],
+                            chat_result.get("name", chat_result["ts_code"]))
 
         return _reply_payload(
             chat_result.get("intent", "brain_chat"),

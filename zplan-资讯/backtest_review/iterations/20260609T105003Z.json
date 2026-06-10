@@ -1,0 +1,53 @@
+{
+  "iteration_id": "20260609T105003Z",
+  "created_at_utc": "2026-06-09T10:50:03.603735Z",
+  "phase": "verify",
+  "note": "",
+  "pick_run_id": 142,
+  "rule_version": "pick-2026-06-anti-chase-v2",
+  "horizon_days": 5,
+  "top_n": 10,
+  "market": {
+    "ok": true,
+    "effective_date": "2026-06-08",
+    "panel_rows": 5505
+  },
+  "metrics": {
+    "pick_run_id": 142,
+    "fail_rate": 1.0,
+    "fail_count": 10,
+    "pass_count": 0,
+    "pending_count": 0,
+    "mean_rule": 69.1,
+    "mean_llm": 68.2,
+    "mean_delta": -0.9,
+    "mean_fwd_return": null,
+    "llm_worse_than_rule": 0,
+    "tag_counts": {
+      "near_60d_high": 10,
+      "no_forward_data": 10
+    }
+  },
+  "review_actions": [
+    {
+      "id": "1",
+      "layer": "strategy",
+      "file": "zplan-选股/config/strategy.yaml → ranking",
+      "action": "确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight",
+      "why": "最终 Top 应由 LLM 分排序，规则只做候选池与约束"
+    },
+    {
+      "id": "2",
+      "layer": "workflow",
+      "file": "重跑 llm-top → llm-eval",
+      "action": "改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate",
+      "why": "旧 run 不会自动应用新 prompt"
+    }
+  ],
+  "report_path": "/Users/richard/my_stock_ai/zplan-资讯/backtest_review/audit_run142_20260609.md",
+  "steps": [
+    "market",
+    "audit"
+  ],
+  "pick_steps": null
+}

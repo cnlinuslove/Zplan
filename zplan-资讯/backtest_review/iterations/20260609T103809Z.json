@@ -1,0 +1,75 @@
+{
+  "iteration_id": "20260609T103809Z",
+  "created_at_utc": "2026-06-09T10:38:09.310528Z",
+  "phase": "verify",
+  "note": "",
+  "pick_run_id": 26,
+  "rule_version": "pick-2026-05-theme",
+  "horizon_days": 5,
+  "top_n": 10,
+  "market": {
+    "ok": true,
+    "effective_date": "2026-06-08",
+    "panel_rows": 5505
+  },
+  "metrics": {
+    "pick_run_id": 26,
+    "fail_rate": 1.0,
+    "fail_count": 10,
+    "pass_count": 0,
+    "pending_count": 0,
+    "mean_rule": 81.23,
+    "mean_llm": 79.25,
+    "mean_delta": -1.98,
+    "mean_fwd_return": -4.21,
+    "llm_worse_than_rule": 0,
+    "tag_counts": {
+      "buy_unreachable": 10,
+      "forward_loss": 7,
+      "momentum_chase": 2
+    }
+  },
+  "review_actions": [
+    {
+      "id": "1",
+      "layer": "strategy",
+      "file": "zplan-选股/config/strategy.yaml → filters.max_ret_20d",
+      "action": "启用或调低 max_ret_20d（如 10），减少过热股进入 Top300",
+      "why": "momentum_chase=2"
+    },
+    {
+      "id": "2",
+      "layer": "strategy",
+      "file": "zplan-选股/config/strategy.yaml → ranking",
+      "action": "试 ranking.mode=blend 且 llm_weight 0.8；或 prompt 要求 close_vs_buy_gap 大时降分",
+      "why": "buy_unreachable=10"
+    },
+    {
+      "id": "3",
+      "layer": "rule_engine",
+      "file": "zplan-共享/src/zplan_shared/features.py → suggested_price_levels",
+      "action": "MA20 折扣 0.98→0.96，或增加 actionable_price≈close 供 LLM 参考",
+      "why": "建议买价系统性低于现价，导致「买不到」"
+    },
+    {
+      "id": "4",
+      "layer": "strategy",
+      "file": "zplan-选股/config/strategy.yaml → ranking",
+      "action": "确认 ranking.mode=llm_primary、resort_after_llm=true；回测后微调 llm_weight",
+      "why": "最终 Top 应由 LLM 分排序，规则只做候选池与约束"
+    },
+    {
+      "id": "5",
+      "layer": "workflow",
+      "file": "重跑 llm-top → llm-eval",
+      "action": "改完配置/prompt 后必须重新 llm-top 生成新 run，再 llm-eval 对比 fail_rate",
+      "why": "旧 run 不会自动应用新 prompt"
+    }
+  ],
+  "report_path": "/Users/richard/my_stock_ai/zplan-资讯/backtest_review/audit_run26_20260609.md",
+  "steps": [
+    "market",
+    "audit"
+  ],
+  "pick_steps": null
+}

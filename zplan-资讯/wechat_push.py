@@ -154,3 +154,59 @@ def push_wechat_file(file_path: str) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("微信文件推送失败: %s", exc)
         return False
+
+
+def push_wechat_template_card(
+    title: str,
+    desc: str,
+    buttons: list[dict[str, str]],
+    task_id: str | None = None,
+) -> bool:
+    """推送模板卡片（button_interaction）到企微群。
+
+    Args:
+        title: 卡片标题
+        desc: 卡片描述
+        buttons: [{"text": "分析 品高股份", "style": 1, "key": "analyze_688227"}, ...]
+                 style: 1=蓝字(推荐), 0=灰字
+                 key: 回调标识，bot 收到 callback 时用 key 区分
+        task_id: 任务 ID，用于去重。不传自动生成。
+
+    WeChat Work 文档:
+      https://developer.work.weixin.qq.com/document/path/99110#template_card
+    """
+    if not WECHAT_PUSH_WEBHOOK:
+        logger.warning("未配置 WECHAT_PUSH_WEBHOOK，跳过卡片推送。")
+        return False
+
+    import time as _time
+
+    payload = {
+        "msgtype": "template_card",
+        "template_card": {
+            "card_type": "button_interaction",
+            "main_title": {"title": title, "desc": desc},
+            "task_id": task_id or f"card_{int(_time.time() * 1000)}",
+            "button_list": [
+                {
+                    "text": b["text"],
+                    "style": b.get("style", 1) if "style" in b else 1,
+                    "key": b["key"],
+                }
+                for b in buttons
+            ],
+        },
+    }
+
+    try:
+        resp = requests.post(WECHAT_PUSH_WEBHOOK, json=payload, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict) and data.get("errcode", 0) not in (0, None):
+            logger.warning("模板卡片推送业务失败: %s", data)
+            return False
+        logger.info("模板卡片推送成功: %s", title)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("模板卡片推送失败: %s", exc)
+        return False

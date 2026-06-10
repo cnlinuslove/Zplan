@@ -1,7 +1,9 @@
 """行情只读查询 API — 各 Agent 统一入口，见 ``docs/DATA_ARCHITECTURE.md``。"""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+import logging
+import time as _time
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 import pandas as pd
@@ -9,6 +11,16 @@ from sqlalchemy import func, select
 
 from zplan_shared.intraday_store import read_intraday_parquet
 from zplan_shared.models import DailyPrice, SessionLocal, StockConceptMember, init_db
+
+logger = logging.getLogger(__name__)
+
+# ── 实时行情缓存（避免频繁调用 AkShare 全市场接口）──
+_realtime_cache: dict[str, dict] = {}
+_realtime_cache_ts: float = 0.0
+_REALTIME_CACHE_TTL_SECONDS = 30  # 缓存 30 秒内复用
+
+# 北京时间时区
+_CST = timezone(timedelta(hours=8))
 
 DEFAULT_ADJUST_TYPE = "qfq"
 BAR_COLUMNS = (
@@ -63,6 +75,16 @@ def _parse_date(value: str | date | datetime | None) -> date | None:
     if pd.isna(parsed):
         return None
     return parsed.date()
+
+
+def _float_or_none(val: object) -> float | None:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    try:
+        f = float(val)
+        return None if pd.isna(f) else f
+    except (TypeError, ValueError):
+        return None
 
 
 def latest_panel_trade_date(
@@ -318,6 +340,103 @@ def get_minute_bars(
     return df.set_index("bar_time")
 
 
+def _is_trading_time() -> bool:
+    """判断当前是否在 A 股交易时段（周一至周五 9:25–15:05 北京时间）。
+
+    9:25 起覆盖集合竞价结果已出；15:05 留余量确保收盘数据可获取。
+    """
+    now = datetime.now(_CST)
+    if now.weekday() >= 5:  # 周六/日
+        return False
+    t = now.hour * 100 + now.minute
+    return 925 <= t <= 1505
+
+
+def _fetch_spot_snapshot() -> dict[str, dict]:
+    """调用 AkShare 获取全市场实时快照，返回 ``{ts_code: {...}}`` 字典。"""
+    import akshare as ak
+
+    from zplan_shared.http_client import configure_akshare_http
+
+    configure_akshare_http()
+    try:
+        df = ak.stock_zh_a_spot_em()
+    except Exception:
+        logger.warning("AkShare stock_zh_a_spot_em() 调用失败", exc_info=True)
+        return {}
+
+    if df is None or df.empty:
+        return {}
+
+    result: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        code = str(row.get("代码", "")).strip().zfill(6)
+        if not code or len(code) != 6:
+            continue
+        try:
+            result[code] = {
+                "ts_code": code,
+                "name": str(row.get("名称", "")).strip(),
+                "price": _float_or_none(row.get("最新价")),
+                "pct_chg": _float_or_none(row.get("涨跌幅")),
+                "change_amt": _float_or_none(row.get("涨跌额")),
+                "open": _float_or_none(row.get("今开")),
+                "high": _float_or_none(row.get("最高")),
+                "low": _float_or_none(row.get("最低")),
+                "pre_close": _float_or_none(row.get("昨收")),
+                "volume": _float_or_none(row.get("成交量")),
+                "amount": _float_or_none(row.get("成交额")),
+                "turnover_rate": _float_or_none(row.get("换手率")),
+            }
+        except Exception:
+            continue
+    return result
+
+
+def get_realtime_quotes_batch(codes: list[str]) -> dict[str, dict]:
+    """批量获取实时行情（一次全市场调用，按 codes 过滤，30s 内缓存复用）。
+
+    Args:
+        codes: 6 位股票代码列表（如 ``["000001", "603020"]``）
+
+    Returns:
+        ``{ts_code: {price, pct_chg, open, high, low, pre_close, volume, amount, turnover_rate, ...}}``
+        非交易时段返回空 dict。
+    """
+    global _realtime_cache, _realtime_cache_ts
+
+    if not _is_trading_time():
+        return {}
+
+    # 缓存命中：直接过滤返回
+    now = _time.monotonic()
+    if _realtime_cache and (now - _realtime_cache_ts) < _REALTIME_CACHE_TTL_SECONDS:
+        return {c: _realtime_cache[c] for c in codes if c in _realtime_cache}
+
+    # 缓存未命中：拉取全市场快照
+    snapshot = _fetch_spot_snapshot()
+    if snapshot:
+        _realtime_cache = snapshot
+        _realtime_cache_ts = _time.monotonic()
+
+    return {c: snapshot[c] for c in codes if c in snapshot}
+
+
+def get_realtime_quote(ts_code: str) -> dict | None:
+    """单票实时行情快照。
+
+    Args:
+        ts_code: 6 位股票代码（如 ``"000001"``）
+
+    Returns:
+        dict with keys: price, pct_chg, open, high, low, pre_close, volume, amount, turnover_rate, name。
+        非交易时段或无数据返回 None。
+    """
+    code = resolve_ts_code(ts_code)
+    batch = get_realtime_quotes_batch([code])
+    return batch.get(code)
+
+
 # ── 筹码峰 (CYQ) ────────────────────────────────────────────
 
 CHIP_COLUMNS = (
@@ -405,3 +524,113 @@ def get_stock_chip(
     if row is None:
         return {}
     return {c: getattr(row, c) for c in CHIP_COLUMNS if c not in ("ts_code", "trade_date")}
+
+
+# ── 指数行情查询（大盘分析用）────────────────────────────────────
+
+from zplan_shared.models import DailyIndex  # noqa: E402
+
+INDEX_BAR_COLUMNS = (
+    "trade_date", "open", "high", "low", "close",
+    "volume", "amount", "pct_chg", "turnover_rate", "source",
+)
+
+
+def latest_index_trade_date() -> date | None:
+    """库内最新指数交易日。"""
+    init_db()
+    with SessionLocal() as session:
+        r = session.execute(
+            select(func.max(DailyIndex.trade_date))
+        ).scalar()
+    if r is None:
+        return None
+    return r if isinstance(r, date) else date.fromisoformat(str(r))
+
+
+def get_index_bars(
+    index_code: str,
+    *,
+    start: str | date | None = None,
+    end: str | date | None = None,
+    lookback: int | None = None,
+) -> pd.DataFrame:
+    """单指数日线 → DataFrame，索引为 ``trade_date``。
+
+    Args:
+        index_code: 6 位指数代码（如 000001）
+        start: 起始日期（可选）
+        end: 结束日期（可选）
+        lookback: 回溯天数（可选，与 start/end 互斥）
+    """
+    init_db()
+    start_d = _parse_date(start)
+    end_d = _parse_date(end)
+
+    stmt = (
+        select(DailyIndex)
+        .where(DailyIndex.index_code == index_code)
+        .order_by(DailyIndex.trade_date)
+    )
+    if start_d:
+        stmt = stmt.where(DailyIndex.trade_date >= start_d)
+    if end_d:
+        stmt = stmt.where(DailyIndex.trade_date <= end_d)
+
+    with SessionLocal() as session:
+        rows = session.execute(stmt).scalars().all()
+
+    if not rows:
+        return pd.DataFrame(columns=["index_code", *INDEX_BAR_COLUMNS]).set_index(
+            pd.Index([], name="trade_date")
+        )
+
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        records.append({
+            "index_code": row.index_code,
+            "index_name": row.index_name,
+            "trade_date": row.trade_date,
+            **{col: getattr(row, col) for col in INDEX_BAR_COLUMNS},
+        })
+    df = pd.DataFrame(records).set_index("trade_date")
+
+    if lookback and lookback > 0:
+        df = df.tail(lookback)
+    return df
+
+
+def get_index_panel(
+    as_of: str | date | None = None,
+    *,
+    fields: Iterable[str] | None = None,
+    index_codes: list[str] | None = None,
+) -> pd.DataFrame:
+    """指定交易日指数截面；``as_of`` 默认库内最新交易日。
+
+    Returns:
+        DataFrame，列为 index_code/index_name + 请求的 fields
+    """
+    init_db()
+    as_of_d = _parse_date(as_of) if as_of is not None else latest_index_trade_date()
+    if as_of_d is None:
+        return pd.DataFrame()
+
+    want = list(fields) if fields else ["close", "pct_chg", "volume", "amount"]
+    cols = [c for c in want if c in INDEX_BAR_COLUMNS or c == "index_code"]
+
+    with SessionLocal() as session:
+        stmt = select(DailyIndex).where(DailyIndex.trade_date == as_of_d)
+        if index_codes:
+            stmt = stmt.where(DailyIndex.index_code.in_(index_codes))
+        rows = session.execute(stmt).scalars().all()
+
+    records = [
+        {
+            "index_code": r.index_code,
+            "index_name": r.index_name,
+            **{c: getattr(r, c) for c in cols},
+        }
+        for r in rows
+    ]
+    return pd.DataFrame(records)

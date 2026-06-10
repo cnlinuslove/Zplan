@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { Card, Statistic, Col, Row, Table, Typography } from 'antd'
-import { FundOutlined, DollarOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { Card, Statistic, Col, Row, Table, Typography, Tag } from 'antd'
+import { FundOutlined, DollarOutlined, ClockCircleOutlined, CompassOutlined, RiseOutlined, FallOutlined, MinusOutlined } from '@ant-design/icons'
 import api from '../api/client'
 
 const { Title } = Typography
@@ -24,9 +24,24 @@ export default function DashboardPage() {
     refetchInterval: 30_000,
   })
 
+  const { data: forecast } = useQuery({
+    queryKey: ['forecast-latest'],
+    queryFn: () => api.get('/forecast/latest'),
+    refetchInterval: 60_000,
+  })
+
   const s = stats?.data?.stats || {}
   const dailyCosts = costs?.data?.daily || []
   const pl = pipeline?.data?.pipeline || {}
+  const fc = forecast?.data?.forecast
+  const fd = fc?.forecast_data
+  const md = fd?.market_direction || {}
+  const DIR_TAG: Record<string, { color: string; icon: React.ReactNode }> = {
+    bullish: { color: 'red', icon: <RiseOutlined /> },
+    bearish: { color: 'green', icon: <FallOutlined /> },
+    'range-bound': { color: 'orange', icon: <MinusOutlined /> },
+  }
+  const dt = DIR_TAG[md.direction] || DIR_TAG['range-bound']
 
   return (
     <div style={{ padding: 24, height: '100vh', overflow: 'auto' }}>
@@ -72,6 +87,47 @@ export default function DashboardPage() {
           </Card>
         </Col>
       </Row>
+
+      {fc && (
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={24}>
+            <Card
+              title={<span><CompassOutlined /> 最新大盘预测</span>}
+              extra={
+                <span>
+                  {fc.as_of_date}
+                  {fc.verified && (
+                    fc.verified.direction_correct
+                      ? <Tag color="success" style={{ marginLeft: 8 }}>✅ 方向正确</Tag>
+                      : <Tag color="error" style={{ marginLeft: 8 }}>❌ 方向偏差</Tag>
+                  )}
+                </span>
+              }
+            >
+              <Row gutter={16}>
+                <Col span={4}>
+                  <Statistic
+                    title="大盘方向"
+                    valueRender={() => (
+                      <Tag color={dt.color} style={{ fontSize: 16, padding: '2px 10px' }}>
+                        {dt.icon} {md.direction}
+                      </Tag>
+                    )}
+                  />
+                </Col>
+                <Col span={4}>
+                  <Statistic title="置信度" value={md.confidence || 0} suffix="%" />
+                </Col>
+                <Col span={16}>
+                  <div style={{ fontSize: 13, color: '#666', maxHeight: 40, overflow: 'hidden' }}>
+                    {md.reasoning || ''}
+                  </div>
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={12}>

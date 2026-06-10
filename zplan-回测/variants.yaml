@@ -1,0 +1,46 @@
+variants:
+  baseline:
+    description: "当前配置：规则过滤+风险审核，max_ret_20d=5%，技术权重52%"
+    # 不做任何覆盖
+
+  llm_primary:
+    description: "LLM 主导排序：LLM 综合分直接决定最终排名，规则仅做候选池"
+    overrides:
+      ranking:
+        mode: llm_primary
+        llm_weight: 0.85
+        rule_weight: 0.15
+        resort_after_llm: true
+
+  deep_value:
+    description: "深度价值：拒绝动量（max_ret_20d=1%），提财务权重到35%，降技术到35%"
+    overrides:
+      filters:
+        max_ret_20d: 1.0
+      weights:
+        technical: 0.35
+        financial: 0.35
+        news: 0.20
+        industry_relative: 0.10
+      scan:
+        min_score: 45.0
+        min_turnover_rate: 0.3
+
+  # ⚠️ 实验性：由 penalty_calibrate.py 自动生成，等新系统数据积累（>500 条有前向收益）后再用于 A/B 对比。
+  calibrated:
+    description: "实证校准处罚权重（由 penalty_calibrate.py 生成，样本不足时勿用）"
+    overrides:
+      penalty_weights:
+        risk_flags:
+          追高风险(涨幅过高): 5.0    # 校准建议 0.0，但样本仅 33，暂维持
+          量价背离(缩量上涨): 4.0    # 校准建议 0.0，但样本仅 24，暂维持
+          接近阶段高点: 3.0          # 校准建议 0.0，但 IR 弱，暂维持
+          超买区域(KDJ/RSI): 3.0     # 校准建议 0.0，但样本仅 15，暂维持
+          监管/减持风险: 6.0          # 样本不足，维持
+          基本面恶化: 5.0             # 唯一有效 flag (Δ=-4.74%, IR=-0.55)
+          题材退潮: 4.0               # 样本不足，维持
+        positive_flags:
+          多题材催化: 2.0             # 校准建议 0.0，但样本仅 7，暂维持
+          资讯催化: 2.0               # 样本不足，维持
+          温和放量上涨: 2.0           # 校准建议 0.0，但样本仅 6，暂维持
+          买价可成交: 1.0             # 校准建议 0.0，但样本仅 7，暂维持

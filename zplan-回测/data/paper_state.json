@@ -1,0 +1,84 @@
+{
+  "created_at": "2026-06-10T00:39:09.967359",
+  "initial_capital": 100000,
+  "cash": 45090.4511,
+  "positions": {
+    "300606": {
+      "ts_code": "300606",
+      "name": "金太阳",
+      "entry_date": "2026-06-09",
+      "entry_price": 34.1,
+      "shares": 500,
+      "cost_basis": 17055.17,
+      "stop_loss": 32.4,
+      "take_profit": 45.45,
+      "holding_days_max": 5,
+      "holding_days_elapsed": 1
+    },
+    "605080": {
+      "ts_code": "605080",
+      "name": "浙江自然",
+      "entry_date": "2026-06-09",
+      "entry_price": 21.21,
+      "shares": 700,
+      "cost_basis": 14852.15,
+      "stop_loss": 20.15,
+      "take_profit": 27.6,
+      "holding_days_max": 5,
+      "holding_days_elapsed": 1
+    },
+    "002263": {
+      "ts_code": "002263",
+      "name": "大东南",
+      "entry_date": "2026-06-09",
+      "entry_price": 3.72,
+      "shares": 3600,
+      "cost_basis": 13397.13,
+      "stop_loss": 3.53,
+      "take_profit": 4.4817,
+      "holding_days_max": 5,
+      "holding_days_elapsed": 1
+    },
+    "605555": {
+      "ts_code": "605555",
+      "name": "德昌股份",
+      "entry_date": "2026-06-09",
+      "entry_price": 16.0,
+      "shares": 600,
+      "cost_basis": 9605.1,
+      "stop_loss": 15.2,
+      "take_profit": 17.5978,
+      "holding_days_max": 5,
+      "holding_days_elapsed": 1
+    }
+  },
+  "pending_orders": [
+    {
+      "ts_code": "301428",
+      "name": "世纪恒通",
+      "entry_id": 3789,
+      "planned_price": 33.39,
+      "planned_shares": 500,
+      "predicted_buy": 33.2231,
+      "stop_loss": 31.72,
+      "predicted_target": 37.95,
+      "rank": 5,
+      "status": "pending",
+      "created_at": "2026-06-10T00:39:09.983280"
+    }
+  ],
+  "trade_history": [],
+  "daily_snapshots": [
+    {
+      "date": "2026-06-09",
+      "cash": 45090.45,
+      "position_value": 58757.0,
+      "total_equity": 103847.45,
+      "daily_return_pct": 3.847451
+    }
+  ],
+  "last_pick_run_id": 151,
+  "updated_at": "2026-06-10T00:39:25.964201",
+  "last_as_of": "2026-05-22",
+  "last_rule_version": "pick-2026-06-anti-chase-v2"
+}

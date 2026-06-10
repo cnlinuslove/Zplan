@@ -271,7 +271,11 @@ def latest_features(df: pd.DataFrame) -> dict[str, float | None]:
 
 
 def suggested_price_levels(bars: pd.DataFrame) -> dict[str, float | None]:
-    """支撑/阻力与建议价位（近端高低点 + MA20 + ATR）。"""
+    """支撑/阻力与建议价位（近端高低点 + MA20 + ATR）。
+
+    买入价以「可成交」为第一原则：A 股 T+1 场景下，次日入场价≈今日收盘价，
+    仅留 0.5% 正常滑点缓冲。深度回调买入价底线收紧到 1.5%。
+    """
     if bars.empty:
         return {}
     recent = bars.tail(20)
@@ -282,17 +286,22 @@ def suggested_price_levels(bars: pd.DataFrame) -> dict[str, float | None]:
     ma20 = enriched["ma20"].iloc[-1] if "ma20" in enriched.columns else None
     atr = enriched["atr14"].iloc[-1] if "atr14" in enriched.columns else None
 
-    # 主买入价：收盘价 × 0.99，仅留 1% 的 T+1 次日开盘正常滑点
-    # 回测验证：0.98 折扣导致 buy_unreachable 率 100%，买入价过于激进
-    buy = close * 0.99
+    # 主买入价：以 MA20 为自然回踩锚点，在 [close×0.98, close×0.995] 区间
+    # 高位股（MA20 远低于市价）→ 0.5% 浅折；贴近 MA20 → MA20 回踩买入
+    buy = close * 0.995
+    if ma20 is not None and not pd.isna(ma20) and close * 0.98 <= float(ma20) <= buy:
+        buy = float(ma20)
+    # 紧凑形态：支撑位在买入区上方，提高到支撑位
     if support > buy:
-        buy = min(support, close * 0.995)
+        buy = support
+    # 底线：T+1 场景下，折价超过 2% 难以成交
+    buy = max(buy, close * 0.98)
 
-    # 深度回调买入价（参考）：底线距市价 ≤3%（原是 5%，改为更贴近市价）
+    # 深度回调买入价（参考）：取支撑/MA20 更低者，底线 2.5%
     dip_buy = support
     if ma20 is not None and not pd.isna(ma20):
-        dip_buy = min(dip_buy, float(ma20) * 0.98)
-    dip_buy = max(dip_buy, close * 0.97)
+        dip_buy = min(dip_buy, float(ma20))
+    dip_buy = max(dip_buy, close * 0.975)
 
     target = resistance
     if atr is not None and not pd.isna(atr):

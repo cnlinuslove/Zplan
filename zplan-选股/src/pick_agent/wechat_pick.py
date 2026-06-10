@@ -11,6 +11,7 @@ from zplan_shared.llm.gemini import llm_available as _llm_available
 gemini_available = _llm_available  # 向下兼容别名
 from zplan_shared.models import init_db
 from zplan_shared.pick_store import save_report_run
+from zplan_shared.market import get_realtime_quote
 
 logger = logging.getLogger(__name__)
 
@@ -389,6 +390,7 @@ def format_wechat_pick_text(
     llm_brief: dict[str, Any] | None = None,
     run_id: int | None = None,
     similar_patterns: dict[str, Any] | None = None,
+    realtime: dict[str, Any] | None = None,
 ) -> str:
     meta = report["meta"]
     advice = report["投资建议"]
@@ -419,9 +421,25 @@ def format_wechat_pick_text(
     # 结论行 + 详细分数
     lines = [
         f"{verdict_emoji} 【{name} {code}】 综合研判：{verdict_label}",
-        f"数据截止 {report.get('as_of', '—')}",
-        f"规则综合分 {rule_s} | 技术面 {tech_score} ({tech_v})",
     ]
+    # ── 实时行情（交易时段显示）──
+    if realtime and realtime.get("price") is not None:
+        rt_price = realtime["price"]
+        rt_pct = realtime.get("pct_chg") or 0
+        rt_arrow = "🔺" if rt_pct > 0 else ("🔻" if rt_pct < 0 else "➖")
+        rt_turn = realtime.get("turnover_rate")
+        rt_vol = realtime.get("volume")
+        rt_parts = [f"⏱ 实时 ¥{rt_price:.2f}  {rt_arrow}{rt_pct:+.2f}%"]
+        if rt_turn is not None:
+            rt_parts.append(f"换手 {rt_turn:.2f}%")
+        if rt_vol is not None:
+            if rt_vol >= 1e8:
+                rt_parts.append(f"成交 {rt_vol/1e8:.1f}亿")
+            elif rt_vol >= 1e4:
+                rt_parts.append(f"成交 {rt_vol/1e4:.0f}万手")
+        lines.append("  ".join(rt_parts))
+    lines.append(f"数据截止 {report.get('as_of', '—')}")
+    lines.append(f"规则综合分 {rule_s} | 技术面 {tech_score} ({tech_v})")
     if llm_score is not None:
         lines.append(f"LLM综合分 {llm_score} | LLM建议 {llm_rec_text}")
 
@@ -659,17 +677,15 @@ def run_pick_for_symbol(
             from zplan_shared.pattern_similarity import find_similar_patterns
             similar_patterns = find_similar_patterns(code, as_of=report.get("as_of"))
 
-        chart_path = plot_stock_chart(
+        chart_paths = plot_stock_chart(
             code,
             price_levels=price_levels,
             risk_flags=risk_flags if risk_flags else None,
             signals=sig_list if sig_list else None,
             similar_patterns=similar_patterns,
         )
-        # 第二张图（MACD + 相似形态）路径由 chart_viz 自动生成
-        chart_macd_path = chart_path.replace(".png", "_macd.png") if chart_path else None
-        if chart_macd_path and not os.path.exists(chart_macd_path):
-            chart_macd_path = chart_path.replace("_kline.png", "_macd.png") if chart_path and "_kline" in chart_path else None
+        chart_path = chart_paths["kline"] if isinstance(chart_paths, dict) else chart_paths
+        chart_macd_path = chart_paths.get("macd") if isinstance(chart_paths, dict) else None
 
         # ── 生成 PDF 报告 ──
         from zplan_shared.report_pdf import generate_pdf_report
@@ -678,6 +694,7 @@ def run_pick_for_symbol(
             report=report,
             llm_brief=llm_row,
             chart_path=chart_path,
+            chart_macd_path=chart_macd_path,
             price_levels=price_levels,
             similar_patterns=similar_patterns,
             risk_flags=risk_flags if risk_flags else None,
@@ -685,11 +702,15 @@ def run_pick_for_symbol(
     except Exception:
         logger.warning("走势图/PDF 生成失败", exc_info=True)
 
+    # ── 实时行情（交易时段）──
+    realtime = get_realtime_quote(code)
+
     text = format_wechat_pick_text(
         report,
         llm_brief=llm_row,
         run_id=run_id,
         similar_patterns=similar_patterns,
+        realtime=realtime,
     )
 
     return {
@@ -873,9 +894,9 @@ def run_screen_for_concept(concept_query: str, *, limit: int = 10) -> dict[str, 
         verdict = row.get("verdict", "")
         verdict_str = str(verdict) if verdict and str(verdict) != "nan" else ""
 
-        # 价格 + 建议买入（收盘价 × 0.98 估算）
+        # 价格 + 建议买入（收盘价 × 0.995，0.5% T+1 滑点缓冲）
         price_str = f"¥{float(close):.2f}" if close is not None and str(close) != "nan" else ""
-        buy_price = round(float(close) * 0.98, 2) if close is not None and str(close) != "nan" and float(close) > 0 else None
+        buy_price = round(float(close) * 0.995, 2) if close is not None and str(close) != "nan" and float(close) > 0 else None
         # 20日涨跌
         ret20 = ret_map.get(code)
         ret20_str = f"20日{ret20:+.1f}%" if ret20 is not None else ""

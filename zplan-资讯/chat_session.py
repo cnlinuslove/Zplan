@@ -26,6 +26,8 @@ class ChatSessionStore:
         self._ttl = ttl_seconds
         self._sessions: dict[str, float] = {}  # chat_id → expire_at
         self._history: dict[str, list[dict[str, str]]] = {}  # chat_id → messages
+        self._current_stock: dict[str, dict[str, str]] = {}  # chat_id → {ts_code, name}
+        self._last_intent: dict[str, str] = {}  # chat_id → intent
         self._lock = threading.Lock()
 
     @property
@@ -40,6 +42,8 @@ class ChatSessionStore:
             self._sessions[chat_id] = time.time() + self._ttl
             if not was_active:
                 self._history.pop(chat_id, None)  # 新会话清空旧历史
+                self._current_stock.pop(chat_id, None)  # 清空旧股票上下文
+                self._last_intent.pop(chat_id, None)
             return not was_active
 
     def is_active(self, chat_id: str) -> bool:
@@ -51,6 +55,8 @@ class ChatSessionStore:
             if time.time() > expire_at:
                 del self._sessions[chat_id]
                 self._history.pop(chat_id, None)
+                self._current_stock.pop(chat_id, None)
+                self._last_intent.pop(chat_id, None)
                 return False
             return True
 
@@ -72,6 +78,8 @@ class ChatSessionStore:
         with self._lock:
             self._sessions.pop(chat_id, None)
             self._history.pop(chat_id, None)
+            self._current_stock.pop(chat_id, None)
+            self._last_intent.pop(chat_id, None)
 
     def add_message(self, chat_id: str, role: str, content: str) -> None:
         """追加一条消息到对话历史。role: 'user' | 'assistant'。"""
@@ -93,6 +101,26 @@ class ChatSessionStore:
             hist = self._history.get(chat_id, [])
             return list(hist)  # 返回副本
 
+    def set_current_stock(self, chat_id: str, ts_code: str, name: str) -> None:
+        """记录当前会话正在讨论的股票，供 Brain 多轮推理使用。"""
+        with self._lock:
+            self._current_stock[chat_id] = {"ts_code": ts_code, "name": name}
+
+    def get_current_stock(self, chat_id: str) -> dict[str, str] | None:
+        """获取当前讨论股票，None 表示无上下文。"""
+        with self._lock:
+            return self._current_stock.get(chat_id)
+
+    def set_last_intent(self, chat_id: str, intent: str) -> None:
+        """记录上一次对话意图，辅助追问题路由。"""
+        with self._lock:
+            self._last_intent[chat_id] = intent
+
+    def get_last_intent(self, chat_id: str) -> str | None:
+        """获取上一次对话意图。"""
+        with self._lock:
+            return self._last_intent.get(chat_id)
+
     def active_count(self) -> int:
         """当前活跃会话数（用于监控）。"""
         now = time.time()
@@ -101,6 +129,8 @@ class ChatSessionStore:
             for cid in stale:
                 del self._sessions[cid]
                 self._history.pop(cid, None)
+                self._current_stock.pop(cid, None)
+                self._last_intent.pop(cid, None)
             return len(self._sessions)
 
 
@@ -155,3 +185,29 @@ def get_history(chat_id: str | None) -> list[dict[str, str]]:
     if not chat_id:
         return []
     return get_session_store().get_history(chat_id)
+
+
+def set_current_stock(chat_id: str | None, ts_code: str, name: str) -> None:
+    """记录当前会话正在讨论的股票。"""
+    if chat_id:
+        get_session_store().set_current_stock(chat_id, ts_code, name)
+
+
+def get_current_stock(chat_id: str | None) -> dict[str, str] | None:
+    """获取当前讨论股票，None 表示无上下文。"""
+    if not chat_id:
+        return None
+    return get_session_store().get_current_stock(chat_id)
+
+
+def set_last_intent(chat_id: str | None, intent: str) -> None:
+    """记录上一次对话意图。"""
+    if chat_id:
+        get_session_store().set_last_intent(chat_id, intent)
+
+
+def get_last_intent(chat_id: str | None) -> str | None:
+    """获取上一次对话意图。"""
+    if not chat_id:
+        return None
+    return get_session_store().get_last_intent(chat_id)
