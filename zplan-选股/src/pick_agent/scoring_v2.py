@@ -39,31 +39,63 @@ def _safe_float(feat: dict[str, float | None], key: str) -> float | None:
 # ═══════════════════════════════════════════════════════
 
 def factor_ret_20d_reversal(feat: dict[str, float | None]) -> float:
-    """20 日跌幅越大，反弹概率越高。
+    """20 日跌幅越大，反弹概率越高——但超过 25% 后递减（基本面崩盘风险）。
 
-    - ret_20d <= -15% → +30
-    - ret_20d [ -15%, -8% ] → +15 ~ +30
-    - ret_20d [ -8%, -3% ] → +5 ~ +15
+    - ret_20d <= -25% → +25（不再无限加分，超跌可能是基本面问题）
+    - ret_20d [ -25%, -15% ] → +20 ~ +25（最佳反弹区间）
+    - ret_20d [ -15%, -8% ] → +12 ~ +20
+    - ret_20d [ -8%, -3% ] → +5 ~ +12
     - ret_20d [ -3%, +3% ] → 0
     - ret_20d [ +3%, +8% ] → -5 ~ -15
-    - ret_20d >= +8% → -20 ~ -35
+    - ret_20d [ +8%, +15% ] → -15 ~ -25
+    - ret_20d >= +15% → -25 ~ -35
     """
     r = _safe_float(feat, "ret_20d")
     if r is None:
         return 0.0
+    if r <= -25:
+        return 25.0  # 封顶，不再奖励极端超跌
     if r <= -15:
-        return _clamp(30.0 + (abs(r) - 15) * 1.5)
+        return _clamp(20.0 + (abs(r) - 15) / 10 * 5)
     if r <= -8:
-        return _clamp(15.0 + (abs(r) - 8) / 7 * 15)
+        return _clamp(12.0 + (abs(r) - 8) / 7 * 8)
     if r <= -3:
-        return _clamp(5.0 + (abs(r) - 3) / 5 * 10)
+        return _clamp(5.0 + (abs(r) - 3) / 5 * 7)
     if r <= 3:
         return 0.0
     if r <= 8:
         return _clamp(-5.0 - (r - 3) / 5 * 10)
     if r <= 15:
-        return _clamp(-20.0 - (r - 8) / 7 * 15)
-    return _clamp(-35.0)
+        return _clamp(-15.0 - (r - 8) / 7 * 10)
+    return _clamp(-25.0 - (r - 15) * 1.5)
+
+
+def factor_ret_20d_trend(feat: dict[str, float | None]) -> float:
+    """温和动量：奖励缓涨、惩罚急涨和所有下跌。
+
+    - ret_20d [ +1%, +5% ] → +15 ~ +25（黄金区间，温和上涨）
+    - ret_20d [ 0%, +1% ] → +5 ~ +15
+    - ret_20d [ -3%, 0% ] → 0 ~ -5
+    - ret_20d [ -8%, -3% ] → -5 ~ -15
+    - ret_20d < -8% → -15 ~ -25（下跌趋势）
+    - ret_20d > +8% → -5 ~ -20（追高风险）
+    """
+    r = _safe_float(feat, "ret_20d")
+    if r is None:
+        return 0.0
+    if 1.0 <= r <= 5.0:
+        return _clamp(15.0 + (r - 1) / 4 * 10)
+    if 0 <= r < 1.0:
+        return _clamp(5.0 + r / 1 * 10)
+    if -3.0 <= r < 0:
+        return _clamp(0.0 + (3 + r) / 3 * (-5))
+    if -8.0 <= r < -3.0:
+        return _clamp(-5.0 + (abs(r) - 3) / 5 * (-10))
+    if r < -8.0:
+        return _clamp(-15.0 - (abs(r) - 8) / 12 * 10, lo=-25)
+    if r > 8.0:
+        return _clamp(-5.0 - (r - 8) / 7 * 15, lo=-20)
+    return 0.0
 
 
 def factor_drawdown_reversal(feat: dict[str, float | None]) -> float:
@@ -192,6 +224,33 @@ def factor_days_since_high(feat: dict[str, float | None]) -> float:
     return -20.0  # 接近最高点风险极大
 
 
+def factor_stabilization(feat: dict[str, float | None]) -> float:
+    """5 日跌幅收窄或转正 → 超卖后企稳信号。
+
+    - ret_5d > +3%: 反弹确认 +20
+    - ret_5d [0, +3%]: 止跌企稳 +10
+    - ret_5d [-3%, 0]: 跌势减缓 +5
+    - ret_5d [-8%, -3%]: 仍在下跌 -5
+    - ret_5d <= -8%: 加速下跌 -15
+
+    这个因子确保只在超卖后出现企稳迹象时才买入，避免接飞刀。
+    """
+    r5 = _safe_float(feat, "ret_5d")
+    if r5 is None:
+        return 0.0
+    if r5 > 5:
+        return 25.0
+    if r5 > 3:
+        return _clamp(20.0 + (r5 - 3) / 2 * 5)
+    if r5 >= 0:
+        return _clamp(10.0 + r5 / 3 * 10)
+    if r5 >= -3:
+        return _clamp(5.0 + (3 + r5) / 3 * 5)
+    if r5 >= -8:
+        return _clamp(-5.0 - (abs(r5) - 3) / 5 * 5)
+    return _clamp(-10.0 - (abs(r5) - 8) / 7 * 5, lo=-20)
+
+
 # ═══════════════════════════════════════════════════════
 # 族 2：趋势质量因子（Trend Quality）
 # ═══════════════════════════════════════════════════════
@@ -306,6 +365,61 @@ def factor_concept_heat(feat: dict[str, float | None]) -> float:
         return 0.0
     # 映射：概念热度 5% → +15; -5% → -15
     return _clamp(heat * 3.0, -20, 20)
+
+
+def factor_sector_momentum(feat: dict[str, float | None]) -> float:
+    """行业动量：股票所属行业（申万一级）的平均 ret_20d 在所有行业中的排名。
+
+    板块轮动的核心信号——压对板块比压对个股更重要。
+    从 rule_universe 注入特征 _industry_heat（行业平均 ret_20d）和 _industry_rank_pct（行业排名百分位）。
+
+    设计原理：
+    - 行业排名前 20%（领涨板块）→ +20 ~ +30（强板块溢价）
+    - 行业排名 20-40% → +5 ~ +20
+    - 行业排名 40-60%（中性）→ -5 ~ +5
+    - 行业排名 60-80% → -5 ~ -15
+    - 行业排名 80-100%（领跌板块）→ -15 ~ -30（弱板块折价）
+
+    比 concept_heat 更强的信号：行业分类更稳定、每只股票有且只有一个行业、覆盖全市场。
+    """
+    rank_pct = _safe_float(feat, "_industry_rank_pct")
+    if rank_pct is None:
+        # 回退：如果有 _industry_heat 但没有排名，用绝对热度
+        heat = _safe_float(feat, "_industry_heat")
+        if heat is None:
+            return 0.0
+        return _clamp(heat * 3.0, -25, 25)
+
+    # rank_pct: 0=最弱行业, 100=最强行业
+    if rank_pct >= 80:
+        return _clamp(20.0 + (rank_pct - 80) / 20 * 10, hi=30)
+    if rank_pct >= 60:
+        return _clamp(5.0 + (rank_pct - 60) / 20 * 15)
+    if rank_pct >= 40:
+        return _clamp(-5.0 + (rank_pct - 40) / 20 * 10)
+    if rank_pct >= 20:
+        return _clamp(-15.0 + (rank_pct - 20) / 20 * 10)
+    return _clamp(-30.0 + rank_pct / 20 * 15, lo=-30)
+
+
+def factor_industry_leader(feat: dict[str, float | None]) -> float:
+    """行业龙头溢价：股票在自身行业内的 ret_20d 排名。
+
+    同一行业内，龙头股（涨幅领先的）往往能持续获得资金关注。
+    从 rule_universe 注入特征 _industry_relative_rank（行业内排名百分位，0-100）。
+    """
+    rel_rank = _safe_float(feat, "_industry_relative_rank")
+    if rel_rank is None:
+        return 0.0
+    if rel_rank >= 80:
+        return _clamp(10.0 + (rel_rank - 80) / 20 * 10, hi=20)
+    if rel_rank >= 60:
+        return _clamp(0.0 + (rel_rank - 60) / 20 * 10)
+    if rel_rank >= 40:
+        return _clamp(-5.0 + (rel_rank - 40) / 20 * 5)
+    if rel_rank >= 20:
+        return _clamp(-10.0 + (rel_rank - 20) / 20 * 5)
+    return _clamp(-15.0 + rel_rank / 20 * 5, lo=-20)
 
 
 def factor_concept_diversity(feat: dict[str, float | None]) -> float:
@@ -552,6 +666,55 @@ def factor_chip_concentration_70(feat: dict[str, float | None]) -> float:
 
 
 # ═══════════════════════════════════════════════════════
+# 族 6：分数稳定性因子（Score Stability）
+# ═══════════════════════════════════════════════════════
+
+def factor_score_stability(feat: dict[str, float | None]) -> float:
+    """分数稳定性因子：过去 10 日规则分越稳定，当前信号越可信。
+
+    从 features 中读取预计算的稳定性指标：
+    - _stability_std_10d: 近 10 日分数标准差
+    - _stability_slope_5d: 近 5 日分数趋势斜率
+
+    设计理念：
+    一只票 5 天分数 75→73→74→76→75（std≈1）比 75→60→80→55→70（std≈10）
+    更可信——后者说明算法对这只票缺乏共识，多空分歧大。
+
+    阈值经回测校准（见 walk_forward_backtest --enable-stability-filter）。
+    """
+    std = _safe_float(feat, "_stability_std_10d")
+    slope = _safe_float(feat, "_stability_slope_5d")
+
+    score = 0.0
+
+    # ── 分数波动惩罚/奖励 ──
+    if std is not None:
+        if std < 3.0:
+            score += 10.0   # 极稳定 → 加分
+        elif std < 7.0:
+            score += 3.0    # 稳定 → 小幅加分
+        elif std < 12.0:
+            score -= 5.0    # 不稳定 → 扣分
+        elif std < 18.0:
+            score -= 15.0   # 高度不稳定 → 大幅扣分
+        else:
+            score -= 25.0   # 极端波动 → 严重扣分（几乎排除）
+
+    # ── 分数趋势惩罚 ──
+    if slope is not None:
+        if slope < -2.0:
+            score -= 8.0    # 分数在快速恶化 → 红灯
+        elif slope < -1.0:
+            score -= 3.0    # 分数在缓慢恶化
+        elif slope > 1.5:
+            score += 5.0    # 分数在改善 → 信号增强
+        elif slope > 0.5:
+            score += 2.0    # 分数轻微改善
+
+    return _clamp(score, -25, 15)
+
+
+# ═══════════════════════════════════════════════════════
 # 因子注册表 & 合成
 # ═══════════════════════════════════════════════════════
 
@@ -564,20 +727,27 @@ TECH_FACTORS: dict[str, FactorFn] = {
     "kdj_oversold": factor_kdj_oversold,
     "close_vs_ma20": factor_close_vs_ma20,
     "days_since_high": factor_days_since_high,
+    "stabilization": factor_stabilization,  # 企稳确认
+    "ret_20d_trend": factor_ret_20d_trend,  # 温和动量
     # 族 2：趋势质量
     "volume_health": factor_volume_health,
     "ma_slope_health": factor_ma_slope_health,
     "low_volatility": factor_low_volatility,
-    # 族 3：资金流向 & 概念热度 (NEW)
+    # 族 3：资金流向 & 概念热度
     "volume_direction": factor_volume_direction,
     "concept_heat": factor_concept_heat,
     "concept_diversity": factor_concept_diversity,
     "turnover_attention": factor_turnover_attention,
-    # 族 5：筹码峰 (NEW)
+    # 族 5：筹码峰
     "chip_profit_ratio": factor_chip_profit_ratio,
     "chip_concentration": factor_chip_concentration,
     "cost_proximity": factor_cost_proximity,
     "chip_concentration_70": factor_chip_concentration_70,
+    # 族 7：分数稳定性
+    "score_stability": factor_score_stability,
+    # 族 6：行业/板块动量（板块轮动核心信号）
+    "sector_momentum": factor_sector_momentum,
+    "industry_leader": factor_industry_leader,
 }
 
 ALL_FACTOR_NAMES = list(TECH_FACTORS.keys()) + [
@@ -623,7 +793,7 @@ def compute_score_v2(
             total += factor_profit_margin(feat, code) * w
         elif name == "profit_stability":
             total += factor_profit_stability(feat, code) * w
-    return round(max(0.0, min(100.0, total)), 1)
+    return round(max(0.0, min(200.0, total)), 1)
 
 
 # ── 预定义方案 ────────────────────────────────────────
@@ -637,14 +807,39 @@ PRESET_SCHEMES: dict[str, tuple[list[str], dict[str, float]]] = {
          "rsi_oversold": 0.8, "kdj_oversold": 0.6,
          "close_vs_ma20": 0.8, "days_since_high": 0.6},
     ),
+    # 回调买入：中长期强势 + 短期回调（实证：high_60d r=+0.03, kdj_d r=-0.14）
+    "pullback_quality": (
+        ["ret_20d_trend", "rsi_oversold", "kdj_oversold",
+         "days_since_high", "stabilization",
+         "volume_health", "ma_slope_health", "low_volatility"],
+        {"ret_20d_trend": 0.8,     # 中长趋势向上（加重）
+         "rsi_oversold": 0.8,       # 短期超卖
+         "kdj_oversold": 1.5,       # 核心：KDJ 超卖（r=-0.14）
+         "days_since_high": 0.5,    # 距高点（回调过）
+         "stabilization": 1.0,      # 企稳确认（加重）
+         "volume_health": 0.5,
+         "ma_slope_health": 0.5,
+         "low_volatility": 0.6},
+    ),
+    # 温和动量 + 趋势质量（实证：v1动量r=+0.077 vs v2反转r=-0.07）
+    "trend_quality": (
+        ["ret_20d_trend", "stabilization",
+         "close_vs_ma20", "days_since_high",
+         "volume_health", "ma_slope_health", "low_volatility",
+         "volume_direction", "turnover_attention"],
+        {"ret_20d_trend": 1.5, "stabilization": 1.0,
+         "close_vs_ma20": 0.5, "days_since_high": 0.3,
+         "volume_health": 0.5, "ma_slope_health": 0.5, "low_volatility": 0.5,
+         "volume_direction": 0.5, "turnover_attention": 0.5},
+    ),
     # 反转 + 趋势质量
     "reversal_plus_quality": (
         ["ret_20d_reversal", "drawdown_reversal", "rsi_oversold",
-         "close_vs_ma20", "days_since_high",
+         "close_vs_ma20", "days_since_high", "stabilization",
          "volume_health", "ma_slope_health", "low_volatility"],
         {"ret_20d_reversal": 1.0, "drawdown_reversal": 0.8,
          "rsi_oversold": 0.6, "close_vs_ma20": 0.6,
-         "days_since_high": 0.5,
+         "days_since_high": 0.5, "stabilization": 1.2,
          "volume_health": 0.4, "ma_slope_health": 0.3, "low_volatility": 0.3},
     ),
     # 全技术因子（族 1+2）
@@ -694,13 +889,32 @@ PRESET_SCHEMES: dict[str, tuple[list[str], dict[str, float]]] = {
         ["ret_20d_reversal", "drawdown_reversal", "rsi_oversold",
          "close_vs_ma20", "days_since_high",
          "volume_direction", "concept_heat", "concept_diversity",
-         "turnover_attention", "volume_health", "low_volatility"],
+         "turnover_attention", "volume_health", "low_volatility",
+         "sector_momentum", "industry_leader"],
         {"ret_20d_reversal": 1.0, "drawdown_reversal": 0.8,
          "rsi_oversold": 0.5, "close_vs_ma20": 0.5,
          "days_since_high": 0.5,
-         "volume_direction": 1.2, "concept_heat": 1.2,
+         "volume_direction": 1.2, "concept_heat": 1.0,
          "concept_diversity": 0.4, "turnover_attention": 0.6,
-         "volume_health": 0.6, "low_volatility": 0.3},
+         "volume_health": 0.6, "low_volatility": 0.3,
+         "sector_momentum": 1.8, "industry_leader": 0.8},
+    ),
+    # ── 板块轮动感知（2026-06-12 新增）──
+    # 反转 + 板块动量 + 行业龙头 — 核心思想：压对板块有时比压对个股更重要
+    "sector_aware": (
+        ["ret_20d_reversal", "drawdown_reversal", "rsi_oversold",
+         "close_vs_ma20", "days_since_high", "stabilization",
+         "volume_direction", "volume_health", "low_volatility",
+         "sector_momentum", "industry_leader",
+         "concept_heat", "concept_diversity", "turnover_attention"],
+        {"ret_20d_reversal": 1.0, "drawdown_reversal": 0.8,
+         "rsi_oversold": 0.5, "close_vs_ma20": 0.5,
+         "days_since_high": 0.5, "stabilization": 1.0,
+         "volume_direction": 0.8, "volume_health": 0.4,
+         "low_volatility": 0.3,
+         "sector_momentum": 2.0, "industry_leader": 1.0,
+         "concept_heat": 0.8, "concept_diversity": 0.3,
+         "turnover_attention": 0.5},
     ),
     # ── 筹码峰方案 (NEW) ──
     # 纯反转 + 筹码峰（测试筹码因子的独立增量效果）
@@ -718,6 +932,6 @@ PRESET_SCHEMES: dict[str, tuple[list[str], dict[str, float]]] = {
     # 全部技术因子 + 筹码峰
     "full_tech_plus_chip": (
         list(TECH_FACTORS.keys()),
-        {k: 0.55 for k in TECH_FACTORS},
+        {k: 0.35 for k in TECH_FACTORS},
     ),
 }

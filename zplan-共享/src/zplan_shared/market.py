@@ -137,6 +137,40 @@ def latest_trade_date(
         ).scalar_one_or_none()
 
 
+def next_trading_day(
+    as_of: date,
+    *,
+    min_symbols: int = 1000,
+    market: str = "a",
+) -> date | None:
+    """返回 ``as_of`` 之后的下一个交易日（从 ``daily_prices`` 推断）。
+
+    若尚无数据则用日历推算（跳过周末）。
+    """
+    init_db()
+    with SessionLocal() as session:
+        row = session.execute(
+            select(DailyPrice.trade_date)
+            .where(
+                DailyPrice.trade_date > as_of,
+                DailyPrice.adjust_type == DEFAULT_ADJUST_TYPE,
+                DailyPrice.market == market,
+            )
+            .group_by(DailyPrice.trade_date)
+            .having(func.count(DailyPrice.ts_code) >= min_symbols)
+            .order_by(DailyPrice.trade_date.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if row:
+        return row
+    # 日线库暂无下一交易日数据时，日历推算
+    from datetime import timedelta
+    nxt = as_of + timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt = nxt + timedelta(days=1)
+    return nxt
+
+
 def get_bars(
     ts_code: str,
     *,

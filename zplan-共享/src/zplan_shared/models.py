@@ -476,6 +476,10 @@ class PickRun(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     trade_date_as_of: Mapped[Optional[Date]] = mapped_column(Date, nullable=True, index=True)
+    trade_date: Mapped[Optional[Date]] = mapped_column(
+        Date, nullable=True, index=True,
+        comment="榜单目标交易日（T-1 盘后生成，用于 T 日交易）",
+    )
     rule_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
     llm_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -804,6 +808,23 @@ class ChatHistory(Base):
     )
 
 
+class ChatSessionState(Base):
+    """企微会话窗口持久化 — 进程重启后恢复多轮对话上下文。
+
+    以 chat_id 为主键，state_json 存储完整会话状态 JSON：
+    {history: [{role, content}, ...], current_stock: {ts_code, name}, last_intent: str}
+    """
+
+    __tablename__ = "chat_session_state"
+
+    chat_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    state_json: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[float] = mapped_column(Float, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 # ── Web 对话模型（zplan-web 专用）──────────────────────────────
 
 
@@ -863,6 +884,65 @@ class LlmResponseCache(Base):
         DateTime, nullable=False, default=datetime.utcnow, index=True
     )
     ttl_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
+
+
+class ScoreStabilitySnapshot(Base):
+    """规则分数稳定性快照 —— 每票每日的滚动稳定性指标。
+
+    基于 ``stock_rule_scores`` 的时间序列计算，用于评估"今天的分数有多可信"。
+    因子级稳定性 JSON 可诊断总分波动是由哪个因子家族驱动的。
+    """
+
+    __tablename__ = "score_stability_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "ts_code", "trade_date", "rule_version", "lookback_days", "market",
+            name="uq_score_stability_snapshots",
+        ),
+        Index("ix_score_stability_ts_date", "ts_code", "trade_date"),
+        Index("ix_score_stability_date", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    trade_date: Mapped[Date] = mapped_column(Date, nullable=False, index=True)
+    rule_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    market: Mapped[str] = mapped_column(String(8), nullable=False, default="a")
+
+    # 当日评分
+    composite_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rank_percentile: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # 回看窗口
+    lookback_days: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+
+    # ── 滚动稳定性指标 ──
+    score_mean_10d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score_std_10d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score_min_10d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score_max_10d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score_range_10d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # 分数趋势（线性回归斜率）
+    score_slope_5d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score_slope_10d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # 方向翻转次数
+    score_direction_flips: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # 排名稳定性
+    rank_stability_10d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # 推荐标记
+    was_recommended: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rec_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # 因子级稳定性
+    factor_stability_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
 
 
 engine = build_engine()
@@ -1054,16 +1134,19 @@ def init_db() -> None:
     _migrate_pick_entries_predictions()
     _migrate_pattern_tables()
     _migrate_chat_history()
+    _migrate_chat_session_state()
     _migrate_hk_market_column()
     _migrate_ah_cross_ref()
     _migrate_daily_chip()
     _migrate_web_chat()
     _migrate_concept_product_v2()
     _migrate_pick_ab_fields()
+    _migrate_pick_trade_date()
     _migrate_daily_index()
     _migrate_market_forecasts()
     _migrate_forecast_evals()
     _migrate_exit_strategy()
+    _migrate_score_stability()
     _ensure_sqlite_indexes()
     _ensure_news_stock_link_table()
 
@@ -1350,6 +1433,37 @@ def _migrate_chat_history() -> None:
             )
 
 
+def _migrate_chat_session_state() -> None:
+    """已有库补建 chat_session_state 表（create_all 对新库直接建表）。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "chat_session_state" not in existing:
+            conn.execute(
+                text(
+                    """CREATE TABLE chat_session_state (
+                        chat_id VARCHAR(128) PRIMARY KEY,
+                        state_json TEXT NOT NULL,
+                        expires_at REAL NOT NULL,
+                        updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+                    )"""
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_chat_session_state_expires "
+                    "ON chat_session_state (expires_at)"
+                )
+            )
+
+
 def _ensure_sqlite_indexes() -> None:
     """已有库上补建索引（create_all 不会改旧表结构）。"""
     url = str(engine.url)
@@ -1627,6 +1741,49 @@ def _migrate_pick_ab_fields() -> None:
         )
 
 
+def _migrate_pick_trade_date() -> None:
+    """已有库补 ``trade_date`` 列：榜单目标交易日。
+
+    存量行用 trade_date_as_of 的下一个交易日回填。
+    """
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing_cols = {
+            row[1]
+            for row in conn.execute(
+                text("PRAGMA table_info(pick_runs)")
+            ).fetchall()
+        }
+        if not existing_cols:
+            return
+        if "trade_date" not in existing_cols:
+            conn.execute(
+                text("ALTER TABLE pick_runs ADD COLUMN trade_date DATE")
+            )
+        # 回填存量：trade_date = MIN(daily_prices.trade_date) > trade_date_as_of
+        conn.execute(
+            text(
+                """UPDATE pick_runs
+                   SET trade_date = (
+                     SELECT MIN(dp.trade_date)
+                     FROM daily_prices dp
+                     WHERE dp.trade_date > pick_runs.trade_date_as_of
+                       AND dp.adjust_type = 'qfq'
+                   )
+                   WHERE trade_date IS NULL
+                     AND trade_date_as_of IS NOT NULL"""
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_pick_runs_trade_date "
+                "ON pick_runs (trade_date)"
+            )
+        )
+
+
 def _migrate_exit_strategy() -> None:
     """出场策略字段：PickEntry 加 exit_plan 列 + ExitPlanDefinition 表。"""
     url = str(engine.url)
@@ -1670,4 +1827,53 @@ def _migrate_exit_strategy() -> None:
                 "  description TEXT,"
                 "  created_at_utc DATETIME NOT NULL DEFAULT (datetime('now'))"
                 ")"
+            ))
+
+
+def _migrate_score_stability() -> None:
+    """已有库补建 score_stability_snapshots 表（分数稳定性追踪）。"""
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing_tables = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "score_stability_snapshots" not in existing_tables:
+            conn.execute(text(
+                """CREATE TABLE score_stability_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts_code VARCHAR(16) NOT NULL,
+                    trade_date DATE NOT NULL,
+                    rule_version VARCHAR(64) NOT NULL,
+                    market VARCHAR(8) NOT NULL DEFAULT 'a',
+                    composite_score REAL,
+                    rank_percentile REAL,
+                    lookback_days INTEGER NOT NULL DEFAULT 10,
+                    score_mean_10d REAL,
+                    score_std_10d REAL,
+                    score_min_10d REAL,
+                    score_max_10d REAL,
+                    score_range_10d REAL,
+                    score_slope_5d REAL,
+                    score_slope_10d REAL,
+                    score_direction_flips INTEGER,
+                    rank_stability_10d REAL,
+                    was_recommended INTEGER NOT NULL DEFAULT 0,
+                    rec_rank INTEGER,
+                    factor_stability_json TEXT,
+                    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(ts_code, trade_date, rule_version, lookback_days, market)
+                )"""
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_score_stability_ts_date "
+                "ON score_stability_snapshots (ts_code, trade_date)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_score_stability_date "
+                "ON score_stability_snapshots (trade_date)"
             ))

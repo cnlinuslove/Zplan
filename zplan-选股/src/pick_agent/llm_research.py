@@ -472,7 +472,16 @@ def format_llm_report_markdown(report: dict[str, Any]) -> str:
     lines.append("## 3. 创始团队与核心管理层")
     lines.append("")
     if team_data and team_data != "待扩展":
-        lines.append(f"- {team_data}")
+        try:
+            import json as _json
+            team_dict = _json.loads(team_data) if isinstance(team_data, str) else team_data
+            if isinstance(team_dict, dict) and team_dict:
+                for k, v in team_dict.items():
+                    lines.append(f"- **{k}**：{v}")
+            else:
+                lines.append(f"- {team_data}")
+        except Exception:
+            lines.append(f"- {team_data}")
     else:
         lines.append("> ⚠️ 管理层数据待充实（需 enrich_company P0 公司档案扩展）")
     lines.append("")
@@ -788,10 +797,38 @@ def _compact_pick_row(p: dict[str, Any]) -> dict[str, Any]:
     concepts = p.get("concepts")
     if concepts is None and p.get("ts_code"):
         concepts = concepts_for_code(str(p["ts_code"]), limit=6)
+
+    # ── 行业上下文（板块轮动关键信息）──
+    features = p.get("features") or {}
+    industry_heat = features.get("_industry_heat")
+    industry_rank_pct = features.get("_industry_rank_pct")
+    industry_rel_rank = features.get("_industry_relative_rank")
+    industry_ctx = None
+    if p.get("industry") and industry_heat is not None:
+        rank_desc = ""
+        if industry_rank_pct is not None:
+            if industry_rank_pct >= 80:
+                rank_desc = "（领涨板块，前{:.0f}%）".format(100 - industry_rank_pct)
+            elif industry_rank_pct >= 60:
+                rank_desc = "（偏强板块）"
+            elif industry_rank_pct >= 40:
+                rank_desc = "（中性）"
+            elif industry_rank_pct >= 20:
+                rank_desc = "（偏弱板块）"
+            else:
+                rank_desc = "（领跌板块，后{:.0f}%）".format(industry_rank_pct)
+        leader_note = ""
+        if industry_rel_rank is not None and industry_rel_rank >= 80:
+            leader_note = "；该股在行业内领涨（前{:.0f}%）".format(100 - industry_rel_rank)
+        industry_ctx = (
+            f"行业「{p['industry']}」20日涨幅 {industry_heat:+.1f}%{rank_desc}{leader_note}"
+        )
+
     return {
         "ts_code": p.get("ts_code"),
         "name": p.get("name"),
         "industry": p.get("industry"),
+        "industry_context": industry_ctx,
         "concepts": concepts or [],
         "concept_count": len(concepts) if concepts else 0,
         "close": close,
@@ -811,6 +848,13 @@ def _compact_pick_row(p: dict[str, Any]) -> dict[str, Any]:
 
 _LLM_BRIEF_RULES = """
 【定位】你是投资分析师。规则引擎已给出综合基准分（rule_composite），你需要综合评估风险与机会：1) 识别风险 → risk_flags；2) 识别正面催化剂 → positive_flags；3) 置信调整 → confidence_adjustment（可正可负）；4) 操作建议 → recommendation。
+
+【板块轮动上下文（重要！2026-06-12 新增）】
+- 每只标的的 JSON 中含有 `industry_context` 字段，描述该股所属行业的 20 日涨幅和板块强弱排名。
+- 领涨板块（前20%）中的个股 → 板块趋势加持，可上调 confidence_adjustment +1~+2（前提：个股无严重风险）。
+- 领跌板块（后20%）中的个股 → 逆势选股风险大，即使个股技术面尚可，也应下调 confidence_adjustment -1~-3，推荐最高为「关注」。
+- 行业龙头（在行业内领涨的个股）→ 有资金聚焦优势，可上调 confidence_adjustment +1~+2。
+- 板块轮动是 A 股最重要的 alpha 来源之一——选对板块有时比选对个股更重要。
 
 【风险识别（必须标注的风险）】
 - ret_20d>5% 且 vol_ratio20<1.0 → 必须标注「量价背离(缩量上涨)」。
@@ -842,6 +886,7 @@ _LLM_BRIEF_RULES = """
 【trend_one_liner 要求】
 - 引用 JSON 中具体数值（ret_20d、vol_ratio20、KDJ K/D、signals 等），≤60 字。
 - 若有正面催化须指明；若有风险须指明风险关键词。
+- 须提及板块强弱（如「XX板块领涨」「行业偏弱」），不可忽略 industry_context。
 - 禁止套话：「均线多头排列」「技术形态强势」「走势向好」等空洞描述一律禁止。
 
 【vs_rule_engine 要求】
@@ -1009,7 +1054,7 @@ def _apply_risk_penalty(
 
     # 计算最终分
     final_score = rule + confidence_adj - risk_penalty + positive_boost
-    out["adjusted_score"] = round(max(0.0, min(100.0, final_score)), 1)
+    out["adjusted_score"] = round(max(0.0, min(200.0, final_score)), 1)
     out["risk_penalty"] = risk_penalty
     out["positive_boost"] = positive_boost
     out["confidence_adjustment"] = confidence_adj
@@ -1077,7 +1122,7 @@ def _brief_review_batch(
     prompt = f"""你是 A 股投资分析师。以下为规则引擎筛出的 {len(rows)} 只（数据截止 {as_of or '最新'}）。
 {_LLM_BRIEF_RULES}
 
-请对**每一只**基于 JSON 中的 concepts、news_48h、close、ret_20d、high_60d_pct、vol_ratio20、KDJ、signals 写 trend_one_liner（**一句话**，≤60字），并给出 risk_flags、positive_flags、confidence_adjustment、recommendation。
+请对**每一只**基于 JSON 中的 industry_context、concepts、news_48h、close、ret_20d、high_60d_pct、vol_ratio20、KDJ、signals 写 trend_one_liner（**一句话**，≤60字），并给出 risk_flags、positive_flags、confidence_adjustment、recommendation。注意 industry_context 描述了板块强弱——领涨板块个股可适度上调信心，领跌板块个股需额外谨慎。
 vs_rule_engine 每项 **≤30字**。勿漏 ts_code。
 
 【候选列表 JSON】

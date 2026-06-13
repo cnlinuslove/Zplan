@@ -26,6 +26,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+from zplan_shared.web_search import search_web, format_search_results
+from zplan_shared.llm.deepseek import generate_json, pop_usage as _pop_llm_usage
+
 DB_PATH = Path(__file__).resolve().parents[3] / "zplan-资讯" / "zplan.db"
 
 
@@ -496,7 +499,8 @@ def _safe_float(row, key: str) -> float | None:
 # ═══════════════════════════════════════════════════════════════════════
 
 def enrich_single(ts_code: str, as_of: str = "2026-06-05", fast: bool = False,
-                  include_products: bool = True) -> dict[str, bool]:
+                  include_products: bool = True,
+                  include_web_research: bool = False) -> dict[str, bool]:
     """为单只股票拉取 P0+P1 数据。fast 模式跳过北向资金（节省 ~13s/只）。"""
     # 先做网络 I/O（无锁），再统一写 DB（短锁）
     profile = fetch_company_profile(ts_code)
@@ -511,7 +515,7 @@ def enrich_single(ts_code: str, as_of: str = "2026-06-05", fast: bool = False,
             db = _get_db()
             ensure_tables(db)
 
-            status = {"profile": False, "peers": False, "reports": False, "holdings": False, "products": False}
+            status: dict[str, bool] = {"profile": False, "peers": False, "reports": False, "holdings": False, "products": False}
 
             if profile:
                 status["profile"] = save_company_profile(db, profile)
@@ -529,6 +533,14 @@ def enrich_single(ts_code: str, as_of: str = "2026-06-05", fast: bool = False,
 
             if products:
                 status["products"] = save_product_detail(db, products)
+
+            # P1.5: Web 调研（可选）
+            if include_web_research:
+                try:
+                    web_result = research_company_online(ts_code, db=db, force=False)
+                    status["web_research"] = web_result is not None
+                except Exception:
+                    status["web_research"] = False
 
             db.close()
             return status
@@ -548,6 +560,7 @@ def ensure_tables(db: sqlite3.Connection) -> None:
     ensure_research_reports_table(db)
     ensure_institutional_holdings_table(db)
     ensure_company_products_table(db)
+    ensure_company_web_research_table(db)
     db.commit()
 
 
@@ -658,6 +671,14 @@ def build_enrich_prompt_section(ts_code: str, db: sqlite3.Connection | None = No
     except Exception:
         pass
 
+    # ── P1.5: Web Research ──
+    try:
+        web_section = build_web_research_prompt_section(ts_code, db)
+        if web_section:
+            parts.append(web_section)
+    except Exception:
+        pass
+
     if should_close:
         db.close()
 
@@ -699,6 +720,373 @@ def ensure_company_products_table(db: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS ix_company_products_updated
     ON company_products (updated_at)
     """)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# P1.5: Web 调研 — 管理层 / 新闻 / 政策
+# ═══════════════════════════════════════════════════════════════════════
+
+def ensure_company_web_research_table(db: sqlite3.Connection) -> None:
+    db.execute("""
+    CREATE TABLE IF NOT EXISTS company_web_research (
+        ts_code VARCHAR(16) PRIMARY KEY,
+        management_json TEXT,
+        news_catalysts_json TEXT,
+        policy_context TEXT,
+        web_sources_json TEXT,
+        llm_model VARCHAR(64),
+        llm_usage_json TEXT,
+        llm_researched_at DATETIME,
+        fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+
+def _load_company_web_research(db: sqlite3.Connection, ts_code: str) -> dict[str, Any] | None:
+    cur = db.execute(
+        "SELECT * FROM company_web_research WHERE ts_code = ?", (ts_code,)
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    for key in ("management_json", "news_catalysts_json", "web_sources_json"):
+        val = d.get(key)
+        if isinstance(val, str):
+            try:
+                d[key] = json.loads(val)
+            except json.JSONDecodeError:
+                pass
+    return d
+
+
+def _get_company_context(ts_code: str, db: sqlite3.Connection) -> tuple[str, str, str]:
+    """返回 (company_name, industry, short_name)。"""
+    cur = db.execute(
+        "SELECT full_name, short_name, industry_csrc, industry_sw "
+        "FROM company_profiles WHERE ts_code = ?", (ts_code,)
+    )
+    row = cur.fetchone()
+    if row:
+        name = row["full_name"] or row["short_name"] or ts_code
+        industry = row["industry_csrc"] or row["industry_sw"] or ""
+        short = row["short_name"] or ""
+        return name, industry, short
+    return ts_code, "", ""
+
+
+def _search_management(
+    ts_code: str, company_name: str, db: sqlite3.Connection
+) -> dict[str, Any] | None:
+    """Web 搜索 + LLM 提取管理层信息。"""
+    queries = [
+        f"{company_name} 创始人 董事长 简历 管理层",
+        f"{company_name} 管理团队 高管介绍 CEO",
+    ]
+    all_results: list[dict[str, str]] = []
+    seen_urls = set()
+    for q in queries:
+        try:
+            results = search_web(q, max_results=5)
+            for r in results:
+                if r.get("url") and r["url"] not in seen_urls:
+                    seen_urls.add(r["url"])
+                    all_results.append(r)
+        except Exception as e:
+            logger.warning("管理层搜索 '%s' 失败: %s", q, e)
+
+    if not all_results:
+        logger.info("管理层搜索 %s: 无结果", ts_code)
+        return None
+
+    search_text = format_search_results(all_results)
+    prompt = f"""你是一位公司治理研究员。基于以下网络搜索结果，提取 {company_name}（{ts_code}）的管理层信息。
+
+搜索来源：
+{search_text}
+
+要求：
+1. 只提取搜索结果中明确提及的管理层成员，不要编造
+2. 对于每一位高管，提取：姓名、职务、学历背景、职业经历
+3. 如果搜索结果没有覆盖某位高管，不要编造
+4. 优先提取：创始人、董事长、CEO/总经理、核心业务负责人
+
+返回 JSON：{{"team_members":[{{"name":"姓名","title":"职务","background":"学历背景与职业经历简介(≤150字)","source_url":"信息来源URL"}}],"founder_info":"创始人信息(如有,≤100字)","org_summary":"管理团队整体评价(≤80字)","confidence":"信息置信度(高/中/低)及原因(≤50字)"}}"""
+
+    try:
+        result = generate_json(prompt=prompt, temperature=0.2, max_output_tokens=2048)
+        result["_web_urls"] = [r.get("url") for r in all_results[:10]]
+        return result
+    except Exception as e:
+        logger.warning("管理层 LLM 提取 %s 失败: %s", ts_code, e)
+        return None
+
+
+def _search_news_catalysts(
+    ts_code: str, company_name: str, db: sqlite3.Connection
+) -> dict[str, Any] | None:
+    """Web 搜索 + LLM 提取近期新闻与催化剂。"""
+    queries = [
+        f"{company_name} 最新消息 公告 2025 2026",
+        f"{company_name} 新闻 业绩 利好",
+    ]
+    all_results: list[dict[str, str]] = []
+    seen_urls = set()
+    for q in queries:
+        try:
+            results = search_web(q, max_results=5)
+            for r in results:
+                if r.get("url") and r["url"] not in seen_urls:
+                    seen_urls.add(r["url"])
+                    all_results.append(r)
+        except Exception as e:
+            logger.warning("新闻搜索 '%s' 失败: %s", q, e)
+
+    if not all_results:
+        logger.info("新闻搜索 %s: 无结果", ts_code)
+        return None
+
+    search_text = format_search_results(all_results)
+    prompt = f"""你是一位股票资讯分析师。基于以下网络搜索结果，总结 {company_name}（{ts_code}）近期的新闻和催化剂。
+
+搜索来源：
+{search_text}
+
+要求：
+1. 只提取搜索结果中明确提及的新闻事件
+2. 每条新闻标注：日期（如有）、标题摘要、事件类型（业绩/产品/政策/资本运作/其他）
+3. 判断利好/利空/中性
+4. 无新闻则如实说明
+
+返回 JSON：{{"recent_news":[{{"date":"新闻日期或'近期'","title":"新闻标题","summary":"内容摘要(≤80字)","type":"事件类型","sentiment":"利好/利空/中性","source_url":"来源URL"}}],"key_catalysts":"当前核心催化剂总结(≤100字)","coverage_note":"新闻覆盖度评价(≤50字)"}}"""
+
+    try:
+        result = generate_json(prompt=prompt, temperature=0.3, max_output_tokens=3072)
+        result["_web_urls"] = [r.get("url") for r in all_results[:10]]
+        return result
+    except Exception as e:
+        logger.warning("新闻 LLM 提取 %s 失败: %s", ts_code, e)
+        return None
+
+
+def _search_policy_context(
+    ts_code: str, company_name: str, industry: str, db: sqlite3.Connection
+) -> str | None:
+    """Web 搜索 + LLM 分析政策监管环境。"""
+    queries = [
+        f"{industry} 政策 监管 2025 2026",
+        f"{company_name} 行业政策 利好 扶持",
+    ]
+    all_results: list[dict[str, str]] = []
+    seen_urls = set()
+    for q in queries:
+        try:
+            results = search_web(q, max_results=5)
+            for r in results:
+                if r.get("url") and r["url"] not in seen_urls:
+                    seen_urls.add(r["url"])
+                    all_results.append(r)
+        except Exception as e:
+            logger.warning("政策搜索 '%s' 失败: %s", q, e)
+
+    if not all_results:
+        logger.info("政策搜索 %s: 无结果", ts_code)
+        return None
+
+    search_text = format_search_results(all_results)
+    prompt = f"""你是一位政策研究员。基于以下网络搜索结果，分析 {company_name}（所属行业：{industry}）面临的政策与监管环境。
+
+搜索来源：
+{search_text}
+
+要求：
+1. 只基于搜索结果中的政策信息
+2. 分析政策对行业的利好/利空影响
+3. 如果不能找到特定政策，说明"未找到针对性的政策资料"
+
+返回纯文本（非JSON）：
+① 关键政策（每条格式：政策名 | 发布机构 | 核心内容 | 影响）
+② 政策趋势总结（≤100字）
+③ 监管风险提示（≤80字）"""
+
+    try:
+        from zplan_shared.llm.deepseek import generate_text
+        result = generate_text(prompt=prompt, temperature=0.25, max_output_tokens=1536)
+        return result.strip() if result else None
+    except Exception as e:
+        logger.warning("政策 LLM 分析 %s 失败: %s", ts_code, e)
+        return None
+
+
+def research_company_online(
+    ts_code: str,
+    *,
+    db: sqlite3.Connection | None = None,
+    force: bool = False,
+) -> dict[str, Any] | None:
+    """Web 搜索 + LLM 结构化提取：管理层、新闻、政策环境。
+
+    基于搜索结果为单只股票做在线调研，结果缓存至 company_web_research 表。
+    """
+    should_close = False
+    if db is None:
+        db = _get_db()
+        should_close = True
+
+    try:
+        ensure_company_web_research_table(db)
+
+        # 检查缓存
+        if not force:
+            cached = _load_company_web_research(db, ts_code)
+            if cached and cached.get("llm_researched_at"):
+                logger.info("网络调研已缓存: %s", ts_code)
+                return cached
+
+        # 获取公司上下文
+        company_name, industry, short_name = _get_company_context(ts_code, db)
+        if not company_name or company_name == ts_code:
+            logger.warning("网络调研 %s: 无公司名称，跳过", ts_code)
+            return None
+
+        logger.info("网络调研 %s: %s (行业: %s)", ts_code, company_name, industry or "未知")
+
+        # 依次执行三个子调研（独立容错）
+        mgmt = _search_management(ts_code, company_name, db)
+        news = _search_news_catalysts(ts_code, company_name, db)
+        policy = _search_policy_context(ts_code, company_name, industry, db) if industry else None
+
+        # 汇总 web sources
+        all_urls: list[str] = []
+        for result in (mgmt, news):
+            if result and "_web_urls" in result:
+                for u in result.pop("_web_urls"):
+                    if u not in all_urls:
+                        all_urls.append(u)
+
+        web_sources = json.dumps(all_urls, ensure_ascii=False)
+        mgmt_json = json.dumps(mgmt, ensure_ascii=False) if mgmt else None
+        news_json = json.dumps(news, ensure_ascii=False) if news else None
+
+        db.execute("""
+        INSERT OR REPLACE INTO company_web_research
+            (ts_code, management_json, news_catalysts_json, policy_context,
+             web_sources_json, llm_model, llm_usage_json, llm_researched_at)
+        VALUES (?, ?, ?, ?, ?, 'deepseek-chat', NULL, datetime('now'))
+        """, (ts_code, mgmt_json, news_json, policy, web_sources))
+        db.commit()
+
+        result = {
+            "management": mgmt,
+            "news_catalysts": news,
+            "policy_context": policy,
+            "web_sources": all_urls,
+            "llm_researched_at": True,
+        }
+        logger.info("网络调研 %s 完成: 管理=%s 新闻=%s 政策=%s",
+                    ts_code,
+                    "有" if mgmt else "无",
+                    "有" if news else "无",
+                    "有" if policy else "无")
+        return result
+
+    except Exception as e:
+        logger.error("网络调研 %s 异常: %s", ts_code, e)
+        return None
+    finally:
+        if should_close:
+            db.close()
+
+
+def build_web_research_prompt_section(
+    ts_code: str, db: sqlite3.Connection | None = None
+) -> str:
+    """将网络调研结果格式化为 prompt 注入文本。"""
+    should_close = False
+    if db is None:
+        db = _get_db()
+        should_close = True
+
+    try:
+        data = _load_company_web_research(db, ts_code)
+        if not data:
+            return ""
+    finally:
+        if should_close:
+            db.close()
+
+    parts: list[str] = []
+
+    # 管理层
+    mgmt = data.get("management_json")
+    if isinstance(mgmt, str):
+        try:
+            mgmt = json.loads(mgmt)
+        except json.JSONDecodeError:
+            mgmt = None
+    if mgmt and isinstance(mgmt, dict):
+        lines = ["【管理层团队（网络调研）】"]
+        founder = mgmt.get("founder_info", "")
+        if founder:
+            lines.append(f"  创始人: {founder}")
+        members = mgmt.get("team_members") or []
+        for m in members[:8]:
+            name = m.get("name", "?")
+            title = m.get("title", "")
+            bg = m.get("background", "")
+            lines.append(f"  {name}（{title}）: {bg}")
+        org = mgmt.get("org_summary", "")
+        if org:
+            lines.append(f"  整体评价: {org}")
+        conf = mgmt.get("confidence", "")
+        if conf:
+            lines.append(f"  置信度: {conf}")
+        parts.append("\n".join(lines))
+
+    # 新闻
+    news = data.get("news_catalysts_json")
+    if isinstance(news, str):
+        try:
+            news = json.loads(news)
+        except json.JSONDecodeError:
+            news = None
+    if news and isinstance(news, dict):
+        lines = ["【近期新闻与催化剂（网络调研）】"]
+        catalysts = news.get("key_catalysts", "")
+        if catalysts:
+            lines.append(f"  催化剂总结: {catalysts}")
+        items = news.get("recent_news") or []
+        for item in items[:8]:
+            date_str = item.get("date", "近期")
+            title = item.get("title", "")
+            sentiment = item.get("sentiment", "")
+            summary = item.get("summary", "")
+            emoji = {"利好": "🟢", "利空": "🔴", "中性": "⚪"}.get(sentiment, "")
+            lines.append(f"  {emoji} [{date_str}] {title} — {summary}")
+        coverage = news.get("coverage_note", "")
+        if coverage:
+            lines.append(f"  覆盖评价: {coverage}")
+        parts.append("\n".join(lines))
+
+    # 政策
+    policy = data.get("policy_context")
+    if policy and isinstance(policy, str) and policy.strip():
+        parts.append(f"【政策环境（网络调研）】\n{policy.strip()}")
+
+    # 引用来源
+    sources = data.get("web_sources_json")
+    if isinstance(sources, str):
+        try:
+            sources = json.loads(sources)
+        except json.JSONDecodeError:
+            sources = None
+    if sources and isinstance(sources, list) and len(sources) > 0:
+        lines = ["【网络调研引用来源】"]
+        for u in sources[:10]:
+            lines.append(f"  - {u}")
+        parts.append("\n".join(lines))
+
+    return "\n\n".join(parts) if parts else ""
 
 
 def fetch_product_detail_zyjs(ts_code: str) -> dict[str, Any] | None:
@@ -1136,17 +1524,39 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     if len(sys.argv) < 2:
-        print("用法: --symbol 300124 | --batch [--fast] [--all] | --products [--top N] [--llm]")
+        print("用法: --symbol 300124 [--web-research] [--force] | --batch [--fast] [--all] | --products [--top N] [--llm] | --web-research-only --symbol X")
         sys.exit(1)
 
     db = _get_db()
     ensure_tables(db)
 
-    if "--symbol" in sys.argv:
+    if "--web-research-only" in sys.argv:
+        # 仅做网络调研
+        idx = sys.argv.index("--symbol") if "--symbol" in sys.argv else None
+        if idx is None:
+            print("需要 --symbol <代码>")
+            sys.exit(1)
+        ts_code = sys.argv[idx + 1]
+        logger.info("网络调研（仅）: %s", ts_code)
+        result = research_company_online(ts_code, force="--force" in sys.argv)
+        logger.info("网络调研结果: %s", result is not None)
+        # 打印 prompt 片段
+        section = build_enrich_prompt_section(ts_code, db)
+        if section:
+            print(section)
+
+    elif "--symbol" in sys.argv:
         idx = sys.argv.index("--symbol")
         ts_code = sys.argv[idx + 1]
-        logger.info("丰富单只: %s", ts_code)
-        status = enrich_single(ts_code, include_products=True)
+        do_web = "--web-research" in sys.argv
+        logger.info("丰富单只: %s%s", ts_code, " + 网络调研" if do_web else "")
+        status = enrich_single(
+            ts_code, include_products=True, include_web_research=do_web
+        )
+        if do_web and "--force" in sys.argv:
+            # force re-run web research
+            research_company_online(ts_code, force=True)
+            status["web_research"] = True
         logger.info("结果: %s", status)
         # 打印 prompt 片段
         section = build_enrich_prompt_section(ts_code, db)

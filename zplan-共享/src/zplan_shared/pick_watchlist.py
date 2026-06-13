@@ -125,23 +125,45 @@ def delete_watch(ts_code: str) -> bool:
 def list_watch(*, enabled_only: bool = True) -> list[dict[str, Any]]:
     init_db()
     with SessionLocal() as session:
-        stmt = select(PickWatchlist).order_by(PickWatchlist.created_at_utc)
+        stmt = (
+            select(PickWatchlist, StockList.name.label("stock_name"))
+            .outerjoin(StockList, PickWatchlist.ts_code == StockList.ts_code)
+            .order_by(PickWatchlist.created_at_utc)
+        )
         if enabled_only:
             stmt = stmt.where(PickWatchlist.enabled.is_(True))
-        rows = session.execute(stmt).scalars().all()
-    return [
-        {
-            "id": r.id,
-            "ts_code": r.ts_code,
-            "name": r.name,
-            "note": r.note,
-            "enabled": r.enabled,
-            "last_sync_at_utc": r.last_sync_at_utc.isoformat() + "Z" if r.last_sync_at_utc else None,
-            "last_brief_at_utc": r.last_brief_at_utc.isoformat() + "Z" if r.last_brief_at_utc else None,
-            "created_at_utc": r.created_at_utc.isoformat() + "Z",
-        }
-        for r in rows
-    ]
+        rows = session.execute(stmt).all()
+
+    result: list[dict[str, Any]] = []
+    needs_update: list[tuple[int, str]] = []
+    for r, stock_name in rows:
+        name = r.name or stock_name
+        if not r.name and stock_name:
+            needs_update.append((r.id, stock_name))
+        result.append(
+            {
+                "id": r.id,
+                "ts_code": r.ts_code,
+                "name": name,
+                "note": r.note,
+                "enabled": r.enabled,
+                "last_sync_at_utc": r.last_sync_at_utc.isoformat() + "Z" if r.last_sync_at_utc else None,
+                "last_brief_at_utc": r.last_brief_at_utc.isoformat() + "Z" if r.last_brief_at_utc else None,
+                "created_at_utc": r.created_at_utc.isoformat() + "Z",
+            }
+        )
+
+    if needs_update:
+        with SessionLocal() as session:
+            for wid, sname in needs_update:
+                session.execute(
+                    update(PickWatchlist)
+                    .where(PickWatchlist.id == wid)
+                    .values(name=sname, updated_at_utc=datetime.utcnow())
+                )
+            session.commit()
+
+    return result
 
 
 def watch_codes(*, enabled_only: bool = True) -> list[str]:

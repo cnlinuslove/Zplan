@@ -302,10 +302,26 @@ def _rule_score(code: str) -> dict[str, Any]:
 # ── LLM 对话 ────────────────────────────────────────────────────────────
 
 
-def _build_chat_prompt(user_message: str, context: dict[str, Any]) -> str:
-    """组装发送给 LLM 的完整 prompt（数据 + 用户消息）。"""
+def _build_chat_prompt(
+    user_message: str,
+    context: dict[str, Any],
+    history: list[dict[str, str]] | None = None,
+    current_stock: dict[str, str] | None = None,
+) -> str:
+    """组装发送给 LLM 的完整 prompt（数据 + 用户消息 + 可选会话上下文）。"""
     parts = ["## 系统已预加载的实时数据\n"]
     today_str = date.today().isoformat()
+
+    # 会话上下文提示
+    if current_stock:
+        cs_code = current_stock["ts_code"]
+        cs_name = current_stock.get("name", cs_code)
+        parts.append(
+            f"### ⚠️ 当前会话上下文（最高优先级）\n"
+            f"用户正在讨论 {cs_name}({cs_code})。"
+            f"如果用户追问中没有明确写出另一只股票，默认仍在讨论该股。"
+            f"用户说「它」「这个」「这股」均指 {cs_name}({cs_code})。\n"
+        )
 
     stock_data = context.get("stocks", [])
     if stock_data:
@@ -340,10 +356,19 @@ def _build_chat_prompt(user_message: str, context: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def llm_driven_chat(user_message: str) -> dict[str, Any]:
+def llm_driven_chat(
+    user_message: str,
+    history: list[dict[str, str]] | None = None,
+    current_stock: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """LLM 驱动的统一对话入口。
 
     替代原有正则路由。预加载数据 → LLM 理解意图 + 生成回复。
+
+    Args:
+        user_message: 当前用户消息
+        history: 可选，之前的对话历史 [{"role":"user","content":...}, ...]
+        current_stock: 可选，会话中当前讨论的股票 {ts_code, name}
     """
     t0 = time.time()
 
@@ -366,16 +391,21 @@ def llm_driven_chat(user_message: str) -> dict[str, Any]:
         len(context.get("live_news", [])),
     )
 
-    # 2. 组装 prompt
-    prompt = _build_chat_prompt(user_message, context)
+    # 2. 组装 prompt（含可选历史上下文和当前股票）
+    prompt = _build_chat_prompt(user_message, context, history=history, current_stock=current_stock)
     logger.info("ChatEngine prompt: %d chars", len(prompt))
 
-    # 3. LLM 调用
+    # 3. 构建 messages 列表（注入历史）
+    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if history:
+        # 只保留最近 6 轮（12 条）
+        recent = history[-12:]
+        messages.extend(recent)
+    messages.append({"role": "user", "content": prompt})
+
+    # 4. LLM 调用
     resp = _chat_completion(
-        [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
+        messages,
         temperature=0.5,
         max_tokens=min(4096, _effective_max_tokens(2048)),
     )

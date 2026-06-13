@@ -12,7 +12,7 @@ from sqlalchemy import desc, select
 
 from zplan_shared.config import ZPLAN_ROOT
 from zplan_shared.etl_akshare import run_catchup_panel_update
-from zplan_shared.market import latest_panel_trade_date
+from zplan_shared.market import latest_panel_trade_date, latest_trade_date
 from zplan_shared.models import PickRun, SessionLocal, init_db
 from zplan_shared.pick_iterate_store import (
     append_iteration,
@@ -60,14 +60,32 @@ def ensure_market_ready(*, workers: int = 8) -> dict[str, Any]:
 
 
 def latest_llm_pick_run_id() -> int | None:
+    """取最新有 forward 数据的 LLM 选股 run（trade_date < 最新交易日）。"""
     init_db()
     with SessionLocal() as session:
-        run = session.execute(
-            select(PickRun)
-            .where(PickRun.run_kind.in_(["llm_top300", "scan"]), PickRun.llm_enabled.is_(True))
-            .order_by(desc(PickRun.id))
-            .limit(1)
-        ).scalar_one_or_none()
+        today = latest_trade_date()
+        if today:
+            run = session.execute(
+                select(PickRun)
+                .where(
+                    PickRun.run_kind.in_(["llm_top300", "scan"]),
+                    PickRun.llm_enabled.is_(True),
+                    PickRun.trade_date.isnot(None),
+                    PickRun.trade_date <= today,
+                )
+                .order_by(PickRun.trade_date.desc(), desc(PickRun.id))
+                .limit(1)
+            ).scalar_one_or_none()
+        else:
+            run = None
+        # 兜底
+        if not run:
+            run = session.execute(
+                select(PickRun)
+                .where(PickRun.run_kind.in_(["llm_top300", "scan"]), PickRun.llm_enabled.is_(True))
+                .order_by(desc(PickRun.trade_date), desc(PickRun.id))
+                .limit(1)
+            ).scalar_one_or_none()
         return int(run.id) if run else None
 
 

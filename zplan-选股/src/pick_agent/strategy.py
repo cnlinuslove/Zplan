@@ -50,6 +50,7 @@ class PickStrategy:
     llm_risk_penalty: float = 8.0
     resort_after_llm: bool = True
     penalty_weights: dict[str, Any] = field(default_factory=dict)
+    v2_preset: str = "reversal_flow_concept"  # scoring_v2 预设方案
     # 行业分散
     max_per_industry: int = 0
     final_max_per_industry: int = 0
@@ -103,6 +104,7 @@ def load_strategy(path: Path | str | None = None) -> PickStrategy:
         llm_scan_brief=bool(llm.get("scan_brief", True)),
         llm_top_n=int(rule_init.get("llm_top_n", 300)),
         llm_batch_size=int(rule_init.get("llm_batch_size", 15)),
+        v2_preset=str(rule_init.get("v2_preset", "reversal_flow_concept")),
         ranking_mode=str(ranking.get("mode", "llm_primary")),
         ranking_llm_weight=float(ranking.get("llm_weight", 0.75)),
         ranking_rule_weight=float(ranking.get("rule_weight", 0.25)),

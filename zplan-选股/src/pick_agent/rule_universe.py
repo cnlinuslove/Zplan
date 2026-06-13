@@ -17,7 +17,7 @@ from zplan_shared.feature_store import get_features_panel
 from zplan_shared.features import feature_flag, scan_universe_features
 from zplan_shared.market import get_history_window, get_panel, latest_trade_date
 from zplan_shared.market_health import check_market_health
-from zplan_shared.models import SessionLocal, StockConceptMember, init_db
+from zplan_shared.models import SessionLocal, StockConceptMember, StockList, init_db
 from zplan_shared.stock_rule_scores import count_scores, upsert_rule_scores
 
 from pick_agent.scanner import (
@@ -94,6 +94,108 @@ def _compute_concept_heat_prod(
     return heat
 
 
+# ── 行业动量（板块轮动核心信号）─────────────────────
+
+_industry_map_cache: dict[str, str] | None = None
+
+
+def _load_industry_map() -> dict[str, str]:
+    """加载股票→行业映射（首次调用后缓存）。"""
+    global _industry_map_cache
+    if _industry_map_cache is not None:
+        return _industry_map_cache
+    init_db()
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(StockList.ts_code, StockList.industry)
+        ).all()
+    result: dict[str, str] = {}
+    for code, industry in rows:
+        if industry:
+            result[code] = industry
+    _industry_map_cache = result
+    logger.info("行业映射加载: %s 只股票, %s 个行业",
+                len(result), len(set(result.values())))
+    return result
+
+
+def _compute_industry_signals(
+    feat_df: pd.DataFrame,
+    industry_map: dict[str, str],
+) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+    """计算行业级别信号。
+
+    Returns:
+        industry_heat: {industry_name: avg_ret_20d}
+        industry_rank_pct: {industry_name: rank_pctile (0-100)}
+        code_relative_rank: {ts_code: within_industry_ret_20d_pctile (0-100)}
+    """
+    if "ret_20d" not in feat_df.columns or "ts_code" not in feat_df.columns:
+        return {}, {}, {}
+
+    # 1. 计算每个行业的平均 ret_20d
+    industry_rets: dict[str, list[float]] = {}
+    for _, row in feat_df.iterrows():
+        code = str(row["ts_code"])
+        ret = row.get("ret_20d")
+        if ret is None or pd.isna(ret):
+            continue
+        ind = industry_map.get(code)
+        if not ind:
+            continue
+        industry_rets.setdefault(ind, []).append(float(ret))
+
+    industry_heat: dict[str, float] = {}
+    for ind, rets in industry_rets.items():
+        if len(rets) >= 5:  # 至少5只股票才有效
+            industry_heat[ind] = sum(rets) / len(rets)
+
+    if not industry_heat:
+        logger.warning("行业热度计算失败：无有效行业数据")
+        return {}, {}, {}
+
+    # 2. 行业排名（百分位）
+    sorted_inds = sorted(industry_heat.items(), key=lambda x: x[1])
+    n = len(sorted_inds)
+    industry_rank_pct: dict[str, float] = {}
+    for rank, (ind, _) in enumerate(sorted_inds):
+        industry_rank_pct[ind] = round(rank / (n - 1) * 100, 1) if n > 1 else 50.0
+
+    # 3. 行业内个股相对排名
+    code_relative_rank: dict[str, float] = {}
+    for ind, rets in industry_rets.items():
+        if len(rets) < 3:
+            continue
+        # 对行业内的 ret_20d 排序，计算每个值的百分位
+        sorted_vals = sorted(rets)
+        m = len(sorted_vals)
+        # 用 scipy 风格的分位数映射
+        val_to_rank = {}
+        for i, v in enumerate(sorted_vals):
+            val_to_rank[v] = round(i / (m - 1) * 100, 1) if m > 1 else 50.0
+
+        # 回填到个股
+        for _, row in feat_df.iterrows():
+            code = str(row["ts_code"])
+            if industry_map.get(code) != ind:
+                continue
+            ret = row.get("ret_20d")
+            if ret is None or pd.isna(ret) or float(ret) not in val_to_rank:
+                continue
+            code_relative_rank[code] = val_to_rank[float(ret)]
+
+    top5 = sorted(industry_heat.items(), key=lambda x: -x[1])[:5]
+    bottom5 = sorted(industry_heat.items(), key=lambda x: x[1])[:5]
+    logger.info(
+        "行业动量: %s 个行业, Top5: %s, Bottom5: %s",
+        len(industry_heat),
+        [(ind, f"{v:+.1f}%") for ind, v in top5],
+        [(ind, f"{v:+.1f}%") for ind, v in bottom5],
+    )
+
+    return industry_heat, industry_rank_pct, code_relative_rank
+
+
 def _signals_from_features(features: dict[str, float | None]) -> list[str]:
     signals: list[str] = []
     ma5, ma20, ma60 = features.get("ma5"), features.get("ma20"), features.get("ma60")
@@ -124,15 +226,19 @@ def build_rule_scores_universe(
     skip_health_check: bool = False,
     use_v2: bool = False,
     as_of: date | None = None,
+    v2_preset: str | None = None,
 ) -> dict[str, Any]:
     """向量化规则分写入 ``stock_rule_scores``（全预筛池，非仅 Top N）。
 
     Args:
-        use_v2: True 时使用 scoring_v2 的 reversal_flow_concept 预设方案。
-                含反转低吸 + 资金流向 + 概念热度因子。
+        use_v2: True 时使用 scoring_v2 的预设方案（默认 reversal_flow_concept）。
         as_of: 指定截面日期（默认最新）。A/B 回放用历史日期。
+        v2_preset: v2 预设方案名，覆盖默认（如 "reversal_only", "tech_plus_financial"）。
     """
     strat = strategy or load_strategy()
+    # v2_preset: 显式传入 > strategy.yaml 配置 > 默认 reversal_flow_concept
+    if v2_preset is None:
+        v2_preset = getattr(strat, "v2_preset", None) or "reversal_flow_concept"
 
     if not skip_health_check and as_of is None:
         health = check_market_health(
@@ -194,17 +300,28 @@ def build_rule_scores_universe(
     name_map = dict(zip(meta["ts_code"], meta["name"].fillna("")))
     close_map = dict(zip(filtered["ts_code"], filtered["close"]))
 
-    # ── v2 模式：概念热度 + 新评分 ──
+    # ── v2 模式：概念热度 + 行业动量 + 新评分 ──
     if use_v2:
         concept_map = _load_concept_members_prod()
         concept_heat = _compute_concept_heat_prod(feat_df, concept_map)
-        v2_factors, v2_weights = PRESET_SCHEMES["reversal_flow_concept"]
+        industry_map = _load_industry_map()
+        industry_heat, industry_rank_pct, code_relative_rank = _compute_industry_signals(
+            feat_df, industry_map
+        )
+        v2_factors, v2_weights = PRESET_SCHEMES[v2_preset]
         logger.info(
-            "v2 模式启用: %s 个因子, 概念 %s 个, 热门概念 Top5: %s",
+            "v2 模式启用: %s 个因子, 概念 %s 个, 行业 %s 个, 热门概念 Top5: %s",
             len(v2_factors),
             len(concept_heat),
+            len(industry_heat),
             sorted(concept_heat.items(), key=lambda x: -x[1])[:5] if concept_heat else [],
         )
+        # 板块轮动日志（关键监控信息）
+        if industry_heat:
+            top_inds = sorted(industry_heat.items(), key=lambda x: -x[1])[:5]
+            bottom_inds = sorted(industry_heat.items(), key=lambda x: x[1])[:5]
+            logger.info("📈 领涨行业: %s", [(ind, f"{v:+.1f}%") for ind, v in top_inds])
+            logger.info("📉 领跌行业: %s", [(ind, f"{v:+.1f}%") for ind, v in bottom_inds])
 
         # ── 筹码峰注入（灰度开关）──
         _chip_lookup: dict[str, dict[str, float | None]] = {}
@@ -238,10 +355,41 @@ def build_rule_scores_universe(
                         len(_chip_lookup),
                         len(feat_df),
                     )
-                    # 启用筹码因子时切换 preset
-                    v2_factors, v2_weights = PRESET_SCHEMES["full_tech_plus_chip"]
+                    # 启用筹码因子时切换 preset（除非显式指定了 preset）
+                    if not v2_preset:
+                        v2_factors, v2_weights = PRESET_SCHEMES["full_tech_plus_chip"]
             except Exception:
                 logger.warning("筹码峰数据加载失败，降级为无筹码模式", exc_info=True)
+
+    # ── 分数稳定性数据注入 ──
+    as_of_d = date.fromisoformat(str(trade_date)[:10])
+
+    _stability_lookup: dict[str, dict[str, float | None]] = {}
+    strat_cfg = strat.dict().get("penalty_weights", {}) if hasattr(strat, 'dict') else {}
+    stab_cfg = strat_cfg.get("stability", {}) if isinstance(strat_cfg, dict) else {}
+    if stab_cfg.get("enabled", True):
+        try:
+            from pick_agent.stability import load_stability_for_stocks
+            codes_list = [str(r["ts_code"]) for _, r in feat_df.iterrows()]
+            if codes_list:
+                stab_data = load_stability_for_stocks(
+                    codes_list, as_of_d,
+                    lookback_days=10, rule_version=strat.rule_version,
+                )
+                for code, info in stab_data.items():
+                    _stability_lookup[code] = {
+                        "_stability_std_10d": info.get("score_std_10d"),
+                        "_stability_slope_5d": info.get("score_slope_5d"),
+                        "_stability_slope_10d": info.get("score_slope_10d"),
+                        "_stability_direction_flips": info.get("score_direction_flips"),
+                        "_stability_rank_std": info.get("rank_stability_10d"),
+                    }
+                logger.info(
+                    "稳定性注入: %s/%s 票命中",
+                    len(_stability_lookup), len(codes_list),
+                )
+        except Exception:
+            logger.warning("稳定性数据加载失败，降级为无稳定性模式", exc_info=True)
 
     rows: list[dict[str, Any]] = []
     for _, r in feat_df.iterrows():
@@ -255,10 +403,23 @@ def build_rule_scores_universe(
             heats = [concept_heat.get(c) for c in concepts if c in concept_heat]
             features["_concept_heat"] = float(np.mean(heats)) if heats else 0.0
             features["_concept_count"] = float(len(concepts))
+            # 注入行业动量数据
+            code_ind = industry_map.get(code, "")
+            if code_ind:
+                features["_industry_heat"] = industry_heat.get(code_ind, 0.0)
+                features["_industry_rank_pct"] = industry_rank_pct.get(code_ind)
+            else:
+                features["_industry_heat"] = 0.0
+                features["_industry_rank_pct"] = None
+            features["_industry_relative_rank"] = code_relative_rank.get(code)
             # 注入筹码峰数据
             chip_data = _chip_lookup.get(code)
             if chip_data:
                 features.update(chip_data)
+            # 注入分数稳定性数据
+            stability_data = _stability_lookup.get(code)
+            if stability_data:
+                features.update(stability_data)
             # v2 评分
             score = compute_score_v2(
                 features, factors=v2_factors, weights=v2_weights, code=code
@@ -268,6 +429,24 @@ def build_rule_scores_universe(
             score = apply_momentum_cap(score, ret20, max_ret_20d=max_ret)
 
         score = round(score, 1)
+
+        # ── 行业信号（用于展示）──
+        ind_signals = []
+        code_ind = industry_map.get(code, "")
+        if code_ind:
+            ind_heat_val = industry_heat.get(code_ind)
+            ind_rank = industry_rank_pct.get(code_ind)
+            ind_rel = code_relative_rank.get(code)
+            if ind_heat_val is not None:
+                ind_signals.append(f"行业「{code_ind}」20日涨幅 {ind_heat_val:+.1f}%")
+            if ind_rank is not None:
+                if ind_rank >= 80:
+                    ind_signals.append(f"领涨板块（前{100-ind_rank:.0f}%）")
+                elif ind_rank < 20:
+                    ind_signals.append(f"领跌板块（后{ind_rank:.0f}%）")
+            if ind_rel is not None and ind_rel >= 80:
+                ind_signals.append("行业龙头溢价")
+
         rows.append(
             {
                 "ts_code": code,
@@ -276,7 +455,7 @@ def build_rule_scores_universe(
                 "composite_score": score,
                 "verdict": verdict_from_score(score),
                 "close": float(close_map[code]) if code in close_map and pd.notna(close_map.get(code)) else features.get("close"),
-                "signals": _signals_from_features(features),
+                "signals": _signals_from_features(features) + ind_signals,
                 "features": {
                     k: features[k]
                     for k in (
@@ -288,13 +467,15 @@ def build_rule_scores_universe(
                         "ma20",
                         "macd_hist",
                         "high_60d_pct",
+                        "_industry_heat",
+                        "_industry_rank_pct",
+                        "_industry_relative_rank",
                     )
                     if k in features
                 },
             }
         )
 
-    as_of_d = date.fromisoformat(str(trade_date)[:10])
     n = upsert_rule_scores(rows, trade_date_as_of=as_of_d, rule_version=strat.rule_version)
     total = count_scores(trade_date_as_of=as_of_d, rule_version=strat.rule_version)
 

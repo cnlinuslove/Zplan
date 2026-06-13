@@ -91,20 +91,28 @@ def get_company_profile(ts_code: str) -> dict[str, Any] | None:
         if val and str(val) not in ("nan", "None", ""):
             products[key_hint] = str(val)[:300]
 
-    # team_json: 法人代表 + 注册资本 + 成立日期
+    # team_json: 法人代表 + 注册资本 + 成立日期 + 注册地址 + 公司简介
     team = {}
     for src_key, target_label in (
         ("legal_rep", "法人代表"),
-        ("registered_capital", "注册资本"),
+        ("registered_capital", "注册资本(万元)"),
         ("establish_date", "成立日期"),
+        ("reg_address", "注册地址"),
+        ("office_address", "办公地址"),
+        ("email", "邮箱"),
+        ("phone", "电话"),
+        ("full_name", "公司全称"),
+        ("en_name", "英文名称"),
+        ("used_names", "曾用名"),
     ):
         if out.get(src_key):
             team[target_label] = str(out[src_key])
-    # 尝试从 profile_json 提取
-    for key_hint in ("法人代表", "总经理", "董事长", "法定代表人", "高管", "董事会"):
-        val = raw_profile.get(key_hint)
-        if val and str(val) not in ("nan", "None", ""):
-            team[key_hint] = str(val)[:200]
+    # 尝试从 profile_json 提取公司历史/机构简介
+    if raw_profile:
+        for key_hint in ("机构简介", "公司简介", "法人代表", "总经理", "董事长"):
+            val = raw_profile.get(key_hint)
+            if val and str(val) not in ("nan", "None", ""):
+                team[key_hint] = str(val)[:300]
 
     return {
         "name": out.get("full_name") or out.get("short_name") or code,

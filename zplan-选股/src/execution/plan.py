@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy import desc, select
 
-from zplan_shared.models import PickEntry, PickRun, SessionLocal, init_db
+from zplan_shared.models import PickEntry, PickRun, SessionLocal, StockList, init_db
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,8 @@ class ExecutionPlan:
     signals: list[str] = field(default_factory=list)
     risk_flags: list[str] = field(default_factory=list)
     llm_trend: str = ""                         # LLM 走势简评（推荐理由）
+    industry: str = ""                          # 行业（来自 StockList）
+    total_mv: float | None = None               # 总市值（元，来自 daily_snapshot）
 
     # ── 盘前调整（T 日 8:28 填入）──
     overnight_adjustment: float = 0.0           # 隔夜情绪调整%
@@ -99,11 +101,11 @@ def load_latest_picks(
     """
     init_db()
     with SessionLocal() as session:
-        # 找最近几个 run，选条目数 >= top_n 的
+        # 找最近几个 run（按 trade_date 倒序，确保取到当日盘前推荐），选条目数 >= top_n 的
         candidates = session.execute(
             select(PickRun)
             .where(PickRun.run_kind == run_kind)
-            .order_by(desc(PickRun.created_at_utc))
+            .order_by(PickRun.trade_date.desc(), desc(PickRun.id))
             .limit(5)
         ).scalars().all()
 
@@ -130,6 +132,38 @@ def load_latest_picks(
             .limit(top_n)
         ).scalars().all()
 
+        # ── 批量补全行业、市值 ──
+        codes = [e.ts_code for e in entries]
+
+        industry_map: dict[str, str] = {}
+        if codes:
+            rows = session.execute(
+                select(StockList.ts_code, StockList.industry)
+                .where(StockList.ts_code.in_(codes))
+            ).all()
+            industry_map = {r.ts_code: (r.industry or "") for r in rows}
+
+        mv_map: dict[str, float] = {}
+        if codes:
+            from sqlalchemy import text
+            latest_snap = session.execute(
+                text("SELECT MAX(trade_date) FROM daily_snapshot")
+            ).scalar()
+            if latest_snap and codes:
+                placeholders = ",".join(f":c{i}" for i in range(len(codes)))
+                params = {f"c{i}": c for i, c in enumerate(codes)}
+                params["d"] = str(latest_snap)
+                rows = session.execute(
+                    text(
+                        f"SELECT ts_code, total_mv FROM daily_snapshot "
+                        f"WHERE ts_code IN ({placeholders}) AND trade_date = :d"
+                    ),
+                    params,
+                ).fetchall()
+                for r in rows:
+                    if r[1] is not None:
+                        mv_map[r[0]] = float(r[1])
+
         plans = []
         for e in entries:
             analysis = {}
@@ -155,6 +189,8 @@ def load_latest_picks(
                 signals=list(analysis.get("signals") or []),
                 risk_flags=list(llm_brief.get("risk_flags") or []),
                 llm_trend=str(llm_brief.get("trend") or ""),
+                industry=industry_map.get(e.ts_code, ""),
+                total_mv=mv_map.get(e.ts_code),
             ))
 
         return plans

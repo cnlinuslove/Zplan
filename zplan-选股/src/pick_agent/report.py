@@ -463,7 +463,16 @@ def format_report_markdown(report: dict[str, Any]) -> str:
     lines.append("## 3. 创始团队与核心管理层")
     lines.append("")
     if team and team != "待扩展":
-        lines.append(f"- {team}")
+        try:
+            import json as _json
+            team_dict = _json.loads(team) if isinstance(team, str) else team
+            if isinstance(team_dict, dict) and team_dict:
+                for k, v in team_dict.items():
+                    lines.append(f"- **{k}**：{v}")
+            else:
+                lines.append(f"- {team}")
+        except Exception:
+            lines.append(f"- {team}")
     else:
         lines.append("> ⚠️ 管理层数据待充实（需 enrich_company P0 公司档案扩展）")
     lines.append("")

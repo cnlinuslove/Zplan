@@ -9,7 +9,7 @@ import pandas as pd
 from sqlalchemy import desc, select
 
 from zplan_shared.features import suggested_price_levels
-from zplan_shared.market import get_bars
+from zplan_shared.market import get_bars, latest_trade_date
 from zplan_shared.models import (
     PickEntry,
     PickLlmEvaluation,
@@ -300,12 +300,30 @@ def evaluate_llm_run(
     init_db()
     with SessionLocal() as session:
         if run_id is None:
-            run = session.execute(
-                select(PickRun)
-                .where(PickRun.run_kind == run_kind, PickRun.llm_enabled.is_(True))
-                .order_by(desc(PickRun.id))
-                .limit(1)
-            ).scalar_one_or_none()
+            # 优先选已到目标交易日的 run（有行情数据可验证）
+            today = latest_trade_date()
+            if today:
+                run = session.execute(
+                    select(PickRun)
+                    .where(
+                        PickRun.run_kind == run_kind,
+                        PickRun.llm_enabled.is_(True),
+                        PickRun.trade_date.isnot(None),
+                        PickRun.trade_date <= today,
+                    )
+                    .order_by(PickRun.trade_date.desc(), desc(PickRun.id))
+                    .limit(1)
+                ).scalar_one_or_none()
+            else:
+                run = None
+            # 兜底：无 forward 数据时取 trade_date 最新 run，再不行取 id 最新
+            if not run:
+                run = session.execute(
+                    select(PickRun)
+                    .where(PickRun.run_kind == run_kind, PickRun.llm_enabled.is_(True))
+                    .order_by(desc(PickRun.trade_date), desc(PickRun.id))
+                    .limit(1)
+                ).scalar_one_or_none()
             if not run:
                 return {"ok": False, "message": f"无 {run_kind} 且 llm_enabled 的运行"}
             run_id = run.id

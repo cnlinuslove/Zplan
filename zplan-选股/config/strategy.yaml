@@ -1,5 +1,11 @@
 version: "1"
-rule_version: "pick-2026-06-anti-chase-v2"
+# 2026-06-12: v5 — 板块轮动感知（sector momentum）
+# 核心洞察：6月12日榜单效果极差，上涨股集中在航天、有色金属 — 压对板块比个股更重要
+# 新增 factor_sector_momentum（行业排名）+ factor_industry_leader（行业内龙头溢价）
+# LLM prompt 注入 industry_context — 领涨/领跌板块上下文
+# 新增 sector_aware 预设（sector_momentum w=2.0, industry_leader w=1.0）
+# v4: walk_forward -1.97%(pullback_quality). v5: 目标 < -1.5%
+rule_version: "pick-2026-06-sector-v5"
 
 scan:
   min_bars: 60
@@ -11,17 +17,20 @@ scan:
   prefilter_top_multiplier: 5
 
 weights:
-  technical: 0.52
+  technical: 0.45
   financial: 0.15
-  news: 0.23          # 偏题材：提高资讯/舆情权重
-  industry_relative: 0.10
+  news: 0.20
+  industry_relative: 0.20     # 提升板块权重（v5：板块动量已内建到 v2 因子中）
 
 filters:
   max_pe_ttm: null
   min_total_mv: null
   max_total_mv: null
-  max_ret_20d: 3.0    # 回测验证：>3% 追高风险显著上升，收紧过滤
-  max_high_60d_pct: 90    # 接近 60 日高点 >90% 剔除（near_60d_high=10/10 回测验证）
+  # 2026-06-12: 实证分析 — ret_20d > 0 的股票前向收益更好（Q5 胜率44% vs Q1 19%）
+  # max_ret_20d 从 3.0 放宽到 12.0，不再过滤温和上涨股
+  # max_high_60d_pct 从 90 放宽到 98，强势股不再被误杀
+  max_ret_20d: 12.0
+  max_high_60d_pct: 98
   # ── 筹码峰（灰度开关，默认关闭）──
   enable_chip_factors: true     # 是否启用筹码峰因子（需 daily_chip 表有数据）
   min_concentration_90: null     # 最低 90% 集中度过滤（null=不启用，建议 0.05~0.3）
@@ -65,6 +74,21 @@ llm:
 rule_init:
   llm_top_n: 300
   llm_batch_size: 10   # 每批简评只数
+  # v2 预设方案（scoring_v2.PRESET_SCHEMES）
+  # sector_aware: 反转+板块动量+行业龙头（v5 推荐）
+  # reversal_flow_concept: 反转+概念热度（v3/v4 默认）
+  # pullback_quality: 回调买入（v4 walk_forward 最优）
+  v2_preset: sector_aware
+
+# 板块动量配置（v5 新增）
+sector_momentum:
+  enabled: true
+  min_stocks_per_industry: 5     # 行业至少5只股票才计算热度
+  sector_momentum_weight: 2.0    # scoring_v2 中 sector_momentum 因子权重
+  industry_leader_weight: 1.0    # scoring_v2 中 industry_leader 因子权重
+  # 板块溢价的 LLM 调整指导
+  llm_sector_boost: 1.5          # 领涨板块个股 confidence_adjustment 上调幅度
+  llm_sector_penalty: 2.5        # 领跌板块个股 confidence_adjustment 下调幅度
 
 # 最终排序：LLM 综合分为主，规则分做候选池约束（buy_unreachable 修复后 LLM 主导）
 ranking:
@@ -102,12 +126,23 @@ penalty_weights:
     net_risk_high_downgrade: 5
     positive_upgrade_threshold: 3
     net_risk_low_upgrade: 2
+  stability:
+    enabled: true
+    std_high_penalty: 8.0
+    std_high_threshold: 12.0
+    slope_negative_penalty: 4.0
+    slope_negative_threshold: -2.0
+    direction_flips_penalty: 3.0
+    flips_threshold: 2
+    exclude_extreme: true
+    top5_no_volatile: true
 
 # ── 出场策略配置 ───────────────────────────────────────────────
 # 选股时每只票会附带一个 ExitPlan；回测可对比不同方案的优劣。
 exit:
   # 默认方案（所有 pick 的兜底）
-  default_plan: "static"
+  # 2026-06-12: walk_forward_exit 跨3日期验证，ma_stop_20 比 static 少亏 ~2%
+  default_plan: "ma_stop_20"
 
   # ATR 计算周期（全局默认）
   atr_period: 14

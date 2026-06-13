@@ -11,6 +11,7 @@ MONO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PRICE_ROOT="$MONO_ROOT/zplan-股价"
 NEWS_ROOT="$MONO_ROOT/zplan-资讯"
 PICK_ROOT="$MONO_ROOT/zplan-选股"
+BACKTEST_ROOT="$MONO_ROOT/zplan-回测"
 export ZPLAN_ROOT="${ZPLAN_ROOT:-$NEWS_ROOT}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 # 东财 push2 等子域名直连不通，统一走代理；日线用新浪不受影响
@@ -303,6 +304,13 @@ echo ""
 echo "═══ Phase 4: LLM 选股 ═══"
 
 LLM_RUN=false
+if require_ok "规则打分"; then
+  run_step "分数稳定性" "$PICK_ROOT" "$PICK_ROOT/.venv/bin/python" \
+    "$BACKTEST_ROOT/scripts/backfill_stability.py" --latest
+else
+  echo "  ⏭️ 分数稳定性 跳过（规则打分未就绪）"; add_step "分数稳定性" "SKIP"
+fi
+
 if require_ok "规则打分"; then
   run_step "LLM简评TOP300" "$PICK_ROOT" "$PICK_ROOT/.venv/bin/python" main.py llm-top --top 300
   _step_ok "LLM简评TOP300" && LLM_RUN=true

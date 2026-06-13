@@ -21,7 +21,7 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 
 from agents.info_query import answer_info_question
 from agents.news_agent import get_history_payload
-from chat_session import session_active, touch_session, expire_session
+from chat_session import add_message, session_active, touch_session, expire_session
 from claude_tasks import queue as claude_task_queue
 from config import CHAT_HISTORY_ENABLED
 from models import init_db
@@ -30,7 +30,9 @@ from topic_admin import list_topics
 from wechat_limits import WECHAT_TEXT_MAX_BYTES, truncate_wechat_utf8
 from zplan_shared.models import (
     ChatHistory,
+    DailyFeature,
     DailyPrice,
+    DailySnapshot,
     MarketForecast,
     PickEntry,
     PickRun,
@@ -96,37 +98,74 @@ def _looks_like_stock_query(text: str) -> bool:
     return bool(_STOCK_CODE_RE.match(s) or re.match(r"^[一-鿿]{2,8}$", s))
 
 
-HELP_TEXT = """【Z-Plan】
+HELP_TEXT = """【Z-Plan 功能说明】
 
-查股票：
-· 发名称或代码 → LLM 深度分析（含综合评分、技术面、财务、风险）
-· 发「分析 爱普股份」→ 强制重跑完整选股分析
-· 发「603987 新闻」→ 个股关联快讯
-· 发「生成爱普股份分析报告」→ 深度研究报告
+━━━ 📊 选股分析 ━━━
+• 爱普股份 → 直接发名称或代码，LLM 深度分析
+• 分析 爱普股份 → 强制重跑完整选股（含 PDF 研报）
+• 603987 新闻 → 个股关联快讯
+• 生成爱普股份分析报告 → 深度研究报告
 
-查市场：
-· 最新 / 7天 → 资讯摘要
-· 直接提问 → 北向资金、美联储等
-· 筛选 脑机接口 → 题材成份股
-· 大盘预测 / 市场预测 → 多空研判 + 板块方向
+━━━ 📋 选股清单 ━━━
+• 选股清单 / 今日推荐 → TOP10 表格（评分·涨跌·PE·距高·买入价）
+  ┗ 含操作建议 + 一键研报快捷指令
 
-选股与对比：
-· 选股清单 → 今日推荐列表
-· 对比 爱普股份 和 平安银行 → 两只股票并排比较
+━━━ 📈 回测验证 ━━━
+• 回测结果 / 选股表现 → 买入价触及率 · 目标价命中 · 失败率
+  ┗ 含校准数据 + 最近迭代记录 + 优化建议
 
-自选与持仓（NEW）：
-· 加入自选 爱普股份 → 添加到关注清单
-· 我的自选 → 查看自选列表
-· 买入 爱普股份 1000股 12.50 → 记录持仓
-· 卖出 爱普股份 → 移除持仓
-· 我的持仓 → 查看持仓 + 盈亏估算
+━━━ 🔮 大盘预测 ━━━
+• 大盘预测 / 市场预测 → 多空研判 + 多空对照 + 指数全景 + 板块方向
 
-其它：
-· 列表 → 全部 topic
-· 帮助 → 本说明
-· 退出 → 结束当前会话窗口"""
+━━━ 📦 批量分析 ━━━
+• 分析 爱普股份 · 分析 平安银行 · 分析 品高股份
+  ┗ 每只独立生成 PDF 研报，逐只推送到群
+
+━━━ ⭐ 自选管理 ━━━
+• 加入自选 爱普股份 → 添加关注
+• 我的自选 → 查看自选列表（含行情快照）
+• 移除自选 爱普股份 → 从清单删除
+
+━━━ 💼 持仓管理 ━━━
+• 买入 爱普股份 1000股 12.50 → 记录成本
+• 卖出 爱普股份 → 移除持仓
+• 我的持仓 → 全部仓位 + 盈亏估算
+
+━━━ ⚖️ 股票对比 ━━━
+• 对比 爱普股份 和 平安银行 → 并排比较评分·PE·涨跌·概念·风险
+
+━━━ 🤖 Claude 远程任务 ━━━
+• claude 优化选股报告格式 → 提交远程任务
+  ┗ Claude 出方案 → 推送审批 → 回复「可以」执行 → 完成推送
+• 可以 / 好的 / go → 批准方案（可附带反馈）
+• 取消 / 算了 → 取消任务
+• 换个方案 + 新要求 → 重新出方案
+
+━━━ 📰 资讯查询 ━━━
+• 最新 / 7天 → 近期快讯摘要
+• 北向资金最近走势？ → 直接提问
+• 筛选 脑机接口 → 题材成份股
+
+━━━ 🔧 其它 ━━━
+• 列表 → 全部资讯 Topic
+• 帮助 → 本说明
+• 退出 → 结束当前会话窗口"""
 
 HELP_MARKDOWN = f"### Z-Plan\n> {HELP_TEXT.replace(chr(10), chr(10) + '> ')}"
+
+# ── 混合路由：活跃会话中保持规则优先的明确指令 ──────────────
+# 匹配这些模式的消息即使在活跃会话中也走规则路由（不交给 Brain）
+_SESSION_RULE_FIRST = re.compile(
+    r"^(帮助|help|\?|？|退出|exit|quit|结束|结束会话|关闭|"
+    r"买入\s+|卖出\s+|"
+    r"加入自选\s+|添加自选\s+|关注\s+|"
+    r"移除自选\s+|删除自选\s+|取消关注\s+|"
+    r"claude[\s,]|@claude[\s,]|"
+    r"选股\s*[：:\s]|分析\s*[：:\s]|打分\s*[：:\s]|研报\s*[：:\s]|评股\s*[：:\s]|查股\s*[：:\s]|评分\s*[：:\s]|"
+    r"筛选\s*[：:\s]|题材\s*[：:\s]|概念\s*[：:\s]"
+    r")",
+    re.IGNORECASE,
+)
 
 # 非 @ 消息且无活跃会话时的提示
 SESSION_REQUIRED_TEXT = (
@@ -136,6 +175,129 @@ SESSION_REQUIRED_TEXT = (
 
 # 会话窗口激活后的提示（仅首次，追加在回复末尾）
 SESSION_ACTIVE_HINT = "\n\n💡 接下来 {} 分钟内，直接发消息即可，无需 @我。"
+
+
+# ── Claude 方案审批 ──────────────────────────────────────
+
+# 审批词根（按长度降序，优先匹配长词如 "go ahead" > "go"）
+_APPROVAL_ROOTS: tuple[str, ...] = tuple(sorted([
+    "go ahead", "do it", "没问题", "approve", "okay",
+    "可以", "ok", "行", "好", "yes", "y", "执行", "go", "批准",
+    "通过", "同意", "确认", "开始", "搞", "干", "动手", "run",
+    "好的", "好滴", "好嘞", "准", "批", "可",
+], key=len, reverse=True))
+
+# 取消词
+_CANCEL_WORDS: frozenset[str] = frozenset({
+    "取消", "cancel", "算了", "不要", "放弃", "abort", "撤销", "作废", "撤回",
+    "不做了", "别做了", "不搞了", "stop", "abort",
+})
+
+# 改方案前缀（按长度降序）
+_REVISE_PREFIXES: tuple[str, ...] = tuple(sorted([
+    "重新设计方案", "不要这个方案", "重新出方案", "换个方案", "修改方案",
+    "重新考虑", "换个思路", "方案不好", "改方案", "方案改", "重新想",
+    "重出", "再想",
+], key=len, reverse=True))
+
+
+def _try_handle_approval(
+    raw: str,
+    low: str,
+    *,
+    chat_id: str = "",
+) -> dict[str, Any] | None:
+    """检测用户是否在审批 Claude 方案。
+
+    识别逻辑：
+      1. 必须有 plan_ready 状态的任务等待审批
+      2. 消息以审批词根开头 → 审批通过，剩余部分为反馈
+      3. 消息精确匹配取消词 → 取消任务
+      4. 消息以改方案前缀开头 → 取消旧任务，创建新任务
+
+    返回 reply_payload 表示已处理（拦截后续路由），返回 None 表示不是审批消息。
+    """
+    if not chat_id:
+        return None
+
+    # ── 1. 查找待审批任务 ──
+    plan_task = claude_task_queue.get_latest_plan_ready(chat_id=chat_id)
+    if plan_task is None:
+        return None
+
+    task_id = plan_task["id"]
+    tid_short = task_id[:8]
+
+    # ── 2. 取消 ──
+    if low.strip() in _CANCEL_WORDS:
+        claude_task_queue.cancel_task(task_id, "用户取消")
+        return _reply_payload(
+            "claude_approval",
+            f"❌ 任务已取消\n\nID: `{tid_short}…`\n"
+            f"原任务: {plan_task['text'][:100]}",
+        )
+
+    # ── 3. 改方案（回到 pending 重新出方案）──
+    for prefix in _REVISE_PREFIXES:
+        if low.startswith(prefix):
+            new_requirement = raw[len(prefix):].strip().lstrip("：:。.！!，, ")
+            new_text = plan_task["text"]
+            if new_requirement:
+                new_text = f"{new_text}（补充要求：{new_requirement}）"
+            claude_task_queue.cancel_task(
+                task_id,
+                f"用户要求改方案: {new_requirement}" if new_requirement else "用户要求改方案",
+            )
+            new_task = claude_task_queue.create_task(
+                text=new_text,
+                user_id=plan_task.get("user_id", ""),
+                chat_id=chat_id,
+            )
+            return _reply_payload(
+                "claude_approval",
+                f"🔄 已重新入队，按新要求生成方案\n\n"
+                f"新任务 ID: `{new_task['id'][:8]}…`\n"
+                f"内容: {new_text[:120]}",
+            )
+
+    # ── 4. 审批通过（匹配审批词根，剩余部分为反馈）──
+    approval_root: str | None = None
+    for root in _APPROVAL_ROOTS:
+        if low.startswith(root):
+            approval_root = root
+            break
+
+    if approval_root is None:
+        return None
+
+    # 提取反馈（审批词根之后的内容，去除前导标点/空格）
+    rest = raw[len(approval_root):].strip()
+    # 去除前导标点符号和语气词
+    rest = rest.lstrip("，,。.；;：:！!、 \t\n\r")
+    # 去除常见的无意义语气词前缀
+    for filler in ("的", "滴", "嘞", "吧", "啦", "哦", "嗯"):
+        if rest.startswith(filler):
+            rest = rest[1:].lstrip("，,。.；;：:！!、 \t\n\r")
+
+    feedback = rest if rest else ""
+    claude_task_queue.approve_task(task_id, feedback)
+
+    if feedback:
+        return _reply_payload(
+            "claude_approval",
+            f"✅ 方案已批准（附带反馈）\n\n"
+            f"ID: `{tid_short}…`\n"
+            f"反馈: {feedback[:150]}\n\n"
+            f"⏳ Claude 将在 {_next_poll_eta()} 内开始执行",
+        )
+    else:
+        return _reply_payload(
+            "claude_approval",
+            f"✅ 方案已批准，开始执行\n\n"
+            f"ID: `{tid_short}…`\n\n"
+            f"⏳ Claude 将在 {_next_poll_eta()} 内开始执行\n"
+            f"📊 完成后企微推送结果",
+        )
 
 
 # ── 模板卡片 ──────────────────────────────────────────────
@@ -167,6 +329,26 @@ def _parse_llm_brief(analysis_json: str | None) -> str:
         return ""
     except (json.JSONDecodeError, TypeError, KeyError):
         return ""
+
+
+def _parse_llm_brief_rich(analysis_json: str | None) -> dict[str, Any]:
+    """提取 LLM 简评的全部结构化字段：trend / recommendation / risk_flags / positive_flags。"""
+    if not analysis_json:
+        return {}
+    try:
+        data = json.loads(analysis_json)
+        brief = data.get("llm_brief", {})
+        if isinstance(brief, dict):
+            return {
+                "trend": str(brief.get("trend", "")).strip(),
+                "recommendation": brief.get("recommendation"),
+                "risk_flags": brief.get("risk_flags", []),
+                "positive_flags": brief.get("positive_flags", []),
+                "confidence_adjustment": brief.get("confidence_adjustment"),
+            }
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return {}
 
 
 def _pick_top_concepts(session, ts_code: str, limit: int = 3) -> str:
@@ -278,11 +460,156 @@ def get_latest_forecast() -> dict[str, Any]:
 
 # ── 选股清单 ──────────────────────────────────────────────
 
-def get_latest_picks() -> dict[str, Any]:
-    """最新选股清单：规则+LLM 排行榜 Top 10。
+# ── 格式化辅助 ──────────────────────────────────────────────
 
-    每行包含：股价、当日涨幅、所属板块、核心理由。
-    """
+def _format_compact_table(entries_data: list[dict]) -> list[str]:
+    """Part 1: 紧凑型表格（评分 / 今% / 20日% / PE / 收盘 / 距高% / 买入 / 稳定）。"""
+    lines = ["| # | 股票 | 评分 | 今% | 20日% | PE | 收盘 | 距高% | 买入 | 稳定 |"]
+    lines.append("|---|------|------|------|-------|----|------|-------|------|------|")
+    for i, item in enumerate(entries_data):
+        name = (item.get("name") or item.get("ts_code", "?"))[:8]
+        code = item.get("ts_code", "?")
+        score = item.get("score")
+        score_s = f"{score:.0f}" if score is not None else "--"
+        pct = item.get("pct_chg")
+        pct_s = f"{pct:+.1f}%" if pct is not None else "--"
+        r20 = item.get("ret_20d")
+        r20_s = f"{r20:+.1f}%" if r20 is not None else "--"
+        pe = item.get("pe_ttm")
+        pe_s = f"{pe:.0f}" if (pe is not None and pe > 0) else "--"
+        close = item.get("close")
+        close_s = f"¥{close:.2f}" if close is not None else "--"
+        ph = item.get("pct_from_high")
+        ph_s = f"{ph:+.0f}%" if ph is not None else "--"
+        buy = item.get("predicted_buy")
+        buy_s = f"¥{buy:.2f}" if (buy is not None and buy > 0) else "--"
+        stab = item.get("stability_emoji", "")
+        lines.append(
+            f"| {i + 1} | {name}({code}) | {score_s} | {pct_s} | {r20_s} | {pe_s} | {close_s} | {ph_s} | {buy_s} | {stab} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _format_detail_lines(entries_data: list[dict]) -> list[str]:
+    """Part 2: 逐只详情行（💡简评 · 🏷概念 · 📉距高 · 动量提示）。"""
+    lines = []
+    for i, item in enumerate(entries_data):
+        parts = []
+        # 推荐理由（从 LLM brief 提取）
+        reason = item.get("reason", "")
+        if reason:
+            parts.append(f"💡{reason}")
+        # 概念标签
+        concepts = item.get("concepts", [])
+        if concepts:
+            parts.append("🏷 " + "·".join(concepts[:2]))
+        # 距高提示
+        ph = item.get("pct_from_high")
+        if ph is not None and ph < -15:
+            parts.append(f"📉距高{ph:.0f}%")
+        # 20日动量提示
+        r20 = item.get("ret_20d")
+        if r20 is not None and abs(r20) > 10:
+            emoji = "🔥" if r20 > 0 else "❄️"
+            parts.append(f"{emoji}20日{r20:+.0f}%")
+        # vol_ratio20 提示
+        vol_ratio = item.get("vol_ratio20")
+        if vol_ratio is not None and vol_ratio > 1.5:
+            parts.append(f"📊量比{vol_ratio:.1f}")
+        # 稳定性警告
+        stab_std = item.get("stability_std")
+        stab_label = item.get("stability_label")
+        stab_slope = item.get("stability_slope")
+        if stab_std is not None and stab_std >= 12:
+            slope_note = f"趋势↓{stab_slope:.0f}/d" if stab_slope is not None and stab_slope < -1 else ""
+            parts.append(f"⚠️分数波动({stab_label}{' ' + slope_note if slope_note else ''})")
+
+        nm = item.get("name") or item.get("ts_code", "?")
+        if parts:
+            lines.append(f"{i + 1}. {nm} {' · '.join(parts)}")
+        else:
+            industry = item.get("industry", "")
+            lines.append(f"{i + 1}. {nm} 📌{industry}" if industry else f"{i + 1}. {nm}")
+
+    return lines
+
+
+def _format_operation_advice(entries_data: list[dict], direction: str) -> list[str]:
+    """Part 3: 操作建议（大盘方向 + 低PE防御 + 今日逆势 + 止损）。"""
+    direction_map = {
+        "bullish": ("🟢 大盘偏多", "可以积极选股，优先强势板块", "建议买入价: 昨收×0.98"),
+        "bearish": ("🔴 大盘偏空", "⚠️ 建议观望，等止跌信号", "若要入场: 买入价收紧到昨收×0.96"),
+        "range-bound": ("🟡 大盘震荡", "仓位≤5成，等回调不追高", "建议买入价: 昨收×0.99"),
+    }
+    d_info = direction_map.get(direction, ("❓ 方向不明", "等待更明确信号", ""))
+
+    lines = ["", "💡 操作建议", ""]
+    lines.append(f"**{d_info[0]}** → {d_info[1]}")
+    lines.append(f"- {d_info[2]}")
+
+    # 低PE防御
+    low_pe = [e for e in entries_data if e.get("pe_ttm") and e["pe_ttm"] > 0 and e["pe_ttm"] < 30]
+    if low_pe:
+        names = [f"{e['name']}(PE{e['pe_ttm']:.0f})" for e in low_pe[:3]]
+        lines.append(f"- 低PE防御: {', '.join(names)}")
+
+    # 今日逆势（涨幅为正的个股）
+    up_stocks = [e for e in entries_data if e.get("pct_chg") is not None and e["pct_chg"] > 0]
+    if up_stocks:
+        names = [f"{e['name']}(+{e['pct_chg']:.1f}%)" for e in up_stocks[:3]]
+        lines.append(f"- 今日逆势: {', '.join(names)}")
+
+    lines.append("- 止损: 个股支撑位下方 1-2%")
+    return lines
+
+
+def _format_report_links(entries_data: list[dict]) -> list[str]:
+    """Part 4: 一键深度研报快捷指令。"""
+    lines = ["", "---", "📊 一键深度研报", ""]
+    cmd_parts = [f"分析 {e.get('name', '?')}" for e in entries_data]
+    for i in range(0, len(cmd_parts), 5):
+        lines.append("> " + " · ".join(cmd_parts[i : i + 5]))
+    return lines
+
+
+def _format_picks_markdown(
+    entries_data: list[dict],
+    as_of: str,
+    rule_version: str,
+    llm_enabled: bool = False,
+    direction: str = "",
+) -> str:
+    """编排四段式 TOP10 报告。"""
+    today_str = datetime.now(BEIJING_TZ).strftime("%m-%d")
+    lines = [f"【今日选股 TOP10】{today_str}"]
+    llm_tag = " · LLM" if llm_enabled else ""
+    lines.append(f"数据截止 {as_of}  |  规则 {rule_version}{llm_tag}")
+    lines.append("")
+
+    if not entries_data:
+        lines.append("⚠️ 暂无选股数据")
+        return "\n".join(lines)
+
+    # Part 1: 紧凑表格
+    lines.extend(_format_compact_table(entries_data))
+
+    # Part 2: 逐只详情
+    lines.extend(_format_detail_lines(entries_data))
+
+    # Part 3: 操作建议
+    lines.extend(_format_operation_advice(entries_data, direction))
+
+    # Part 4: 一键研报
+    lines.extend(_format_report_links(entries_data))
+
+    return "\n".join(lines)
+
+
+# ── 主入口 ──────────────────────────────────────────────
+
+def get_latest_picks() -> dict[str, Any]:
+    """最新选股清单：紧凑表格 + 详情行 + 操作建议 + 一键研报。"""
     init_db()
     with SessionLocal() as session:
         run = session.execute(
@@ -308,11 +635,16 @@ def get_latest_picks() -> dict[str, Any]:
             .limit(10)
         ).scalars().all()
 
-        # 批量查行业 & 当日行情
+        if not entries:
+            return _reply_payload(
+                "picks_list",
+                "选股记录存在但无有效条目。",
+            )
+
         codes = [e.ts_code for e in entries]
         as_of_date = run.trade_date_as_of
 
-        # 行业
+        # ── 行业 ──
         industry_map: dict[str, str] = {}
         if codes:
             rows = session.execute(
@@ -321,7 +653,7 @@ def get_latest_picks() -> dict[str, Any]:
             ).all()
             industry_map = {r.ts_code: (r.industry or "") for r in rows}
 
-        # 当日涨跌幅
+        # ── 当日行情（涨跌幅、收盘价）──
         pct_map: dict[str, float | None] = {}
         close_map: dict[str, float | None] = {}
         if codes and as_of_date:
@@ -335,61 +667,276 @@ def get_latest_picks() -> dict[str, Any]:
             pct_map = {r.ts_code: r.pct_chg for r in rows}
             close_map = {r.ts_code: r.close for r in rows}
 
-    data_date = (
+        # ── 20日涨跌 + 距高% + 量比（DailyFeature）──
+        ret_20d_map: dict[str, float | None] = {}
+        high_dist_map: dict[str, float | None] = {}
+        vol_ratio_map: dict[str, float | None] = {}
+        if codes and as_of_date:
+            feat_rows = session.execute(
+                select(
+                    DailyFeature.ts_code,
+                    DailyFeature.ret_20d,
+                    DailyFeature.high_60d_pct,
+                    DailyFeature.vol_ratio20,
+                )
+                .where(
+                    DailyFeature.ts_code.in_(codes),
+                    DailyFeature.trade_date == as_of_date,
+                )
+            ).all()
+            for r in feat_rows:
+                ret_20d_map[r[0]] = r[1]
+                # high_60d_pct 是 close/high_60*100，距高 = pct - 100
+                if r[2] is not None:
+                    high_dist_map[r[0]] = r[2] - 100
+                vol_ratio_map[r[0]] = r[3]
+
+        # ── PE（DailySnapshot 最新日期）──
+        pe_map: dict[str, float | None] = {}
+        if codes:
+            from sqlalchemy import func as sqlfunc
+            latest_snap = session.execute(
+                select(sqlfunc.max(DailySnapshot.trade_date))
+            ).scalar()
+            if latest_snap:
+                snap_rows = session.execute(
+                    select(DailySnapshot.ts_code, DailySnapshot.pe_ttm)
+                    .where(
+                        DailySnapshot.ts_code.in_(codes),
+                        DailySnapshot.trade_date == latest_snap,
+                    )
+                ).all()
+                pe_map = {r[0]: r[1] for r in snap_rows}
+
+        # ── 概念 ──
+        concept_map: dict[str, list[str]] = {}
+        if codes:
+            _SKIP_CONCEPTS = {
+                "小盘股", "小盘成长", "微盘股", "微利股", "昨日高振幅", "破增发价股",
+                "2025年报预增", "2025年报扭亏", "QFII重仓", "转债标的", "贬值受益",
+                "央国企改革", "黑龙江", "深圳特区", "机械设备", "通信", "电子", "计算机",
+                "公用事业", "电力", "基础化工", "化学制品", "元件", "通信技术", "通信设备",
+            }
+            c_rows = session.execute(
+                select(StockConceptMember.ts_code, StockConceptMember.concept_name)
+                .where(StockConceptMember.ts_code.in_(codes))
+            ).all()
+            for cr in c_rows:
+                if cr[1] not in _SKIP_CONCEPTS:
+                    concept_map.setdefault(cr[0], []).append(cr[1])
+
+        # ── 分数稳定性 ──
+        stability_map: dict[str, dict[str, Any]] = {}
+        try:
+            from zplan_shared.models import ScoreStabilitySnapshot
+            if codes and as_of_date:
+                stab_rows = session.execute(
+                    select(ScoreStabilitySnapshot).where(
+                        ScoreStabilitySnapshot.ts_code.in_(codes),
+                        ScoreStabilitySnapshot.trade_date == as_of_date,
+                        ScoreStabilitySnapshot.lookback_days == 10,
+                    )
+                ).scalars().all()
+                for sr in stab_rows:
+                    from pick_agent.stability import classify_stability
+                    tier = classify_stability(sr.score_std_10d)
+                    stability_map[sr.ts_code] = {
+                        "std_10d": sr.score_std_10d,
+                        "slope_5d": sr.score_slope_5d,
+                        "slope_10d": sr.score_slope_10d,
+                        "range_10d": sr.score_range_10d,
+                        "flips": sr.score_direction_flips,
+                        "rank_std": sr.rank_stability_10d,
+                        "emoji": tier["emoji"],
+                        "label": tier["label"],
+                    }
+        except ImportError:
+            pass  # stability 模块未安装
+
+        # ── 大盘方向 ──
+        direction = ""
+        mf = session.execute(
+            select(MarketForecast)
+            .order_by(desc(MarketForecast.created_at_utc))
+            .limit(1)
+        ).scalars().first()
+        if mf:
+            direction = mf.market_direction or ""
+
+        # ── 组装 entries_data ──
+        entries_data: list[dict[str, Any]] = []
+        for e in entries:
+            code = e.ts_code
+            # 提取 LLM 简评（结构化）
+            brief = _parse_llm_brief_rich(e.analysis_process_json)
+            reason = brief.get("trend", "")
+            # 如果 trend 为空，尝试提取第一句作为简评
+            if not reason:
+                reason = _parse_llm_brief(e.analysis_process_json)
+
+            stab = stability_map.get(code, {})
+            entries_data.append({
+                "ts_code": code,
+                "name": e.name or code,
+                "score": e.final_composite_score or e.rule_composite_score,
+                "close": close_map.get(code) or e.close_price,
+                "pct_chg": pct_map.get(code),
+                "ret_20d": ret_20d_map.get(code),
+                "pe_ttm": pe_map.get(code),
+                "pct_from_high": high_dist_map.get(code),
+                "vol_ratio20": vol_ratio_map.get(code),
+                "predicted_buy": e.predicted_buy_price,
+                "industry": industry_map.get(code, ""),
+                "concepts": concept_map.get(code, [])[:2],
+                "reason": reason,
+                # 稳定性
+                "stability_emoji": stab.get("emoji", ""),
+                "stability_label": stab.get("label", ""),
+                "stability_std": stab.get("std_10d"),
+                "stability_slope": stab.get("slope_5d"),
+                "stability_range": stab.get("range_10d"),
+            })
+
+    as_of = (
         run.trade_date_as_of.strftime("%m-%d")
         if run.trade_date_as_of
         else run.created_at_utc.strftime("%m-%d %H:%M")
     )
+
+    markdown = _format_picks_markdown(
+        entries_data,
+        as_of=as_of,
+        rule_version=run.rule_version or "",
+        llm_enabled=bool(run.llm_enabled),
+        direction=direction,
+    )
+
     today_str = datetime.now(BEIJING_TZ).strftime("%m-%d")
-    lines = [f"【今日选股 TOP10】{today_str}"]
-    lines.append(f"数据截止 {data_date}  |  规则 {run.rule_version}" + (" · LLM" if run.llm_enabled else ""))
-    lines.append("")
-
-    for e in entries:
-        score = e.final_composite_score or e.rule_composite_score
-        score_str = f"{score:.0f}" if score is not None else "--"
-        nm = e.name or e.ts_code
-
-        # 股价 & 涨幅
-        price = close_map.get(e.ts_code) or e.close_price
-        price_str = f"¥{price:.2f}" if price is not None else "--"
-        pct = pct_map.get(e.ts_code)
-        if pct is not None:
-            arrow = "↑" if pct >= 0 else "↓"
-            pct_str = f"{arrow}{abs(pct):.2f}%"
-        else:
-            pct_str = "--"
-
-        # 板块
-        industry = industry_map.get(e.ts_code, "")
-        concepts = _pick_top_concepts(session, e.ts_code, limit=3)
-        sector_line = industry if industry else ""
-        if concepts:
-            sector_line = f"{sector_line} | {concepts}" if sector_line else concepts
-
-        # 核心理由（从 LLM 分析中提取）
-        reason = _parse_llm_brief(e.analysis_process_json)
-
-        lines.append(
-            f"{e.rank_in_run or '-'}. {nm}({e.ts_code}) {price_str} {pct_str} 评分{score_str}"
-        )
-        if sector_line:
-            lines.append(f"   📌 {sector_line}")
-        if reason:
-            lines.append(f"   💡 {reason}")
-
-    lines.append("")
-    lines.append("点击下方按钮，或发送「分析 股票名」查看详情")
-
     card = _make_card(
         title=f"今日选股 TOP10 · {today_str}",
-        desc=f"数据截止 {data_date} · Top {len(entries)} · 规则 {run.rule_version}",
+        desc=f"数据截止 {as_of} · Top {len(entries_data)} · 规则 {run.rule_version}",
         buttons=[
             {"text": "刷新清单", "style": 1, "key": "picklist"},
             {"text": "分析某股", "style": 0, "key": "picklist_analyze"},
         ],
     )
-    return _reply_payload("picks_list", "\n".join(lines), card=card)
+    return _reply_payload("picks_list", markdown, card=card)
+
+
+# ── 回测结果 ──────────────────────────────────────────────
+
+def get_latest_backtest() -> dict[str, Any]:
+    """最新回测验证：选股命中率 / 买入价触及率 / 迭代优化建议。"""
+    init_db()
+    try:
+        from zplan_shared.pick_predictions import calibration_summary
+        from zplan_shared.pick_iterate_store import list_iterations
+
+        cal = calibration_summary(horizon_days=10)
+        iters = list_iterations(limit=5)
+
+        today_str = datetime.now(BEIJING_TZ).strftime("%m-%d")
+        lines = [f"【选股回测验证】{today_str}", ""]
+
+        # ── Part 1: 校准摘要 ──
+        if cal.get("count", 0) > 0:
+            lines.append("━━━ 📐 预测校准（10日窗口）━━━")
+            lines.append(f"• 验证样本: {cal['count']} 条")
+            touch_rate = cal.get("touch_rate", 0)
+            touch_emoji = "✅" if touch_rate >= 0.6 else ("⚠️" if touch_rate >= 0.4 else "🔴")
+            lines.append(
+                f"• 买入价触及率: {touch_emoji} {touch_rate:.1%}  "
+                f"（{4 - int(touch_rate * 5)}/5 — 期内最低价达到建议买入价的比例）"
+            )
+            mean_gap = cal.get("mean_buy_gap_pct")
+            if mean_gap is not None:
+                gap_label = "偏高" if mean_gap > 1 else ("偏低" if mean_gap < -2 else "适中")
+                lines.append(f"• 买价均价差: {mean_gap:+.2f}%（{gap_label}，正=买价低于最低价→买不到）")
+            target_rate = cal.get("target_hit_rate", 0)
+            if target_rate is not None:
+                lines.append(f"• 目标价命中: {target_rate:.1%}（达到止盈线的比例）")
+            stop_rate = cal.get("stop_hit_rate", 0)
+            if stop_rate is not None:
+                lines.append(f"• 止损触发: {stop_rate:.1%}（跌破止损线的比例）")
+            mean_ret = cal.get("mean_return_from_buy_pct")
+            if mean_ret is not None:
+                ret_emoji = "🟢" if mean_ret > 0 else "🔴"
+                lines.append(f"• 均收益（从买价）: {ret_emoji} {mean_ret:+.2f}%")
+            lines.append("")
+
+            # 按价格来源分拆
+            by_source = cal.get("by_price_source") or []
+            if by_source:
+                lines.append("按买入价来源:")
+                for s in by_source[:4]:
+                    label = {"rule": "规则计算", "stored": "存储值", "rule_recomputed": "规则重算"}.get(
+                        s.get("price_source", ""), s.get("price_source", "?")
+                    )
+                    tr = s.get("touch_rate", 0)
+                    mg = s.get("mean_gap_pct")
+                    lines.append(
+                        f"  {label}: {s['n']}条 触及{tr:.0%} "
+                        f"均价差{mg:+.1f}%" if mg is not None else f"  {label}: {s['n']}条 触及{tr:.0%}"
+                    )
+                lines.append("")
+
+        else:
+            lines.append("⚠️ 暂无校准数据，请先运行回测验证")
+            lines.append("")
+
+        # ── Part 2: 最近迭代 ──
+        if iters:
+            lines.append("━━━ 🔄 最近迭代记录 ━━━")
+            for it in iters[:3]:
+                iter_id = it.get("iteration_id", "")[:16]
+                fail_rate = it.get("fail_rate")
+                metrics = it.get("metrics", {})
+                if isinstance(metrics, str):
+                    try:
+                        import ast
+                        metrics = ast.literal_eval(metrics)
+                    except Exception:
+                        metrics = {}
+                fail_count = metrics.get("fail_count", metrics.get("fail_rate"))
+                pass_count = metrics.get("pass_count")
+                mean_rule = metrics.get("mean_rule")
+                mean_llm = metrics.get("mean_llm")
+                mean_fwd = metrics.get("mean_fwd_return")
+
+                fr_str = f"{fail_rate:.0%}" if isinstance(fail_rate, (int, float)) else str(fail_rate)
+                status_emoji = "✅" if (isinstance(fail_rate, (int, float)) and fail_rate < 0.5) else "⚠️"
+                lines.append(
+                    f"{status_emoji} {iter_id}  "
+                    f"失败率 {fr_str}"
+                )
+                if pass_count is not None and fail_count is not None:
+                    lines.append(f"   通过 {pass_count} / 失败 {fail_count}")
+                if mean_rule is not None and mean_llm is not None:
+                    delta = mean_llm - mean_rule
+                    lines.append(f"   规则均分 {mean_rule:.1f}  LLM均分 {mean_llm:.1f}  (Δ{delta:+.1f})")
+                if mean_fwd is not None:
+                    lines.append(f"   前向收益 {mean_fwd:+.2f}%")
+
+                tags = it.get("top_failure_tags") or []
+                if tags:
+                    lines.append(f"   🏷 失败模式: {', '.join(str(t) for t in tags[:3])}")
+                lines.append("")
+
+        # ── Part 3: 优化建议 ──
+        hints = cal.get("optimization_hints") or []
+        if hints:
+            lines.append("━━━ 💡 优化建议 ━━━")
+            for h in hints:
+                lines.append(f"• {h}")
+            lines.append("")
+
+        lines.append("💡 发送「选股清单」查看最新推荐 | 「大盘预测」看方向")
+
+        return _reply_payload("backtest", "\n".join(lines))
+
+    except Exception as e:
+        logger.exception("获取回测数据失败")
+        return _reply_payload("backtest", f"回测数据获取失败: {e}")
 
 
 # ── 路由核心 ──────────────────────────────────────────────
@@ -414,22 +961,25 @@ def _next_poll_eta() -> str:
 # ── 上下文功能提示 ──────────────────────────────────────────
 
 _HINT_MAP: dict[str, str] = {
-    "pick": "💡 新功能：发送「加入自选」收藏 | 「对比 两只股票」横向比较 | 「买入 1000股 价格」记录持仓",
-    "pick_symbol": "💡 新功能：发送「加入自选」收藏 | 「对比 两只股票」横向比较 | 「买入 1000股 价格」记录持仓",
-    "pick_screen": "💡 发送「选股 名称」查看个股深度分析 | 「对比 A 和 B」并排比较",
-    "picks_list": "💡 发送「选股 名称」查看个股分析 | 「对比 A 和 B」横向比较两股",
-    "forecast": "💡 发送「选股清单」看今日推荐 | 直接发股票名深度分析 | 「筛选 题材名」选标的",
-    "watchlist": "💡 发送「选股 名称」分析自选股 | 「我的持仓」查看仓位 | 「对比 A B」比较",
-    "watch_add": "💡 发送「选股」分析该股 | 「我的持仓」记录买入",
-    "positions": "💡 发送「选股 名称」分析持仓股 | 「对比 A B」横向比较 | 「加入自选 XX」扩展关注",
-    "buy": "💡 发送「选股」跟踪分析 | 「对比」比较 | 「我的持仓」查看全部",
-    "sell": "💡 发送「选股 名称」发掘新标的 | 「我的自选」管理关注清单",
-    "compare": "💡 发送「加入自选 XX」收藏 | 「买入 XX 1000股 价格」记录持仓",
-    "brain_chat": "💡 新功能：持仓追踪、股票对比、自选管理。发送「帮助」查看全部功能",
-    "help": "💡 新上线：持仓追踪、股票对比、多轮追问。选股报告后可追问「目标价合理吗？」",
-    "history_latest": "💡 发送「选股清单」看推荐 | 直接提问如「北向资金最近走势如何」",
-    "topic_list": "💡 发送「查 北向资金」按 topic 搜索 | 「最新」看今日快讯",
-    "claude_task": "💡 发送「claude 任务描述」让 Claude 远程改代码，完成后企微推送结果",
+    "pick": "💡 试试：「加入自选」收藏 | 「对比 A 和 B」横比 | 「买入 1000股 价格」记录持仓",
+    "pick_symbol": "💡 试试：「加入自选」收藏 | 「对比 A 和 B」横比 | 「买入 1000股 价格」记录持仓",
+    "pick_screen": "💡 试试：「选股 名称」个股分析 | 「对比 A 和 B」并排比较 | 「筛选 题材」选标的",
+    "picks_list": "💡 试试：「选股 名称」个股分析 | 「对比 A 和 B」横比 | 点击下方按钮快捷操作",
+    "forecast": "💡 试试：「选股清单」看推荐 | 发股票名深度分析 | 「筛选 题材名」选标的",
+    "watchlist": "💡 试试：「选股 名称」分析自选 | 「我的持仓」仓位 | 「对比 A B」比较两股",
+    "watch_add": "💡 试试：「选股 名称」分析该股 | 「我的持仓」记录买入 | 「我的自选」查看全部",
+    "positions": "💡 试试：「选股 名称」分析持仓 | 「对比 A B」横比 | 「加入自选 XX」扩展清单",
+    "buy": "💡 试试：「选股 名称」跟踪分析 | 「对比」比较 | 「我的持仓」查看全部",
+    "sell": "💡 试试：「选股 名称」发掘新标的 | 「我的自选」管理清单 | 「帮助」看全部功能",
+    "compare": "💡 试试：「加入自选 XX」收藏 | 「买入 XX 1000股 价格」记录持仓 | 「选股清单」看推荐",
+    "brain_chat": "💡 试试：「选股 名称」深度分析 | 「帮助」看全部功能 | 选股后可追问「目标价合理吗？」",
+    "help": "💡 选股报告后可追问「目标价合理吗？」| 分析完自动支持多轮对话",
+    "history_latest": "💡 试试：「选股清单」看推荐 | 直接提问「北向资金最近走势如何」",
+    "topic_list": "💡 试试：「查 北向资金」按 topic 搜索 | 「最新」看今日快讯",
+    "claude_task": "💡 方案生成后会推送审批 → 回复「可以」执行 → 完成后推送结果",
+    "claude_approval": "💡 回复「可以」继续执行 | 「换个方案 新要求」重新出 | 「取消」放弃",
+    "batch_pick": "💡 每只股票独立生成 PDF 研报，向上翻看即可 | 也可单独「选股 名称」分析",
+    "backtest": "💡 试试：「选股清单」看推荐 | 「大盘预测」看方向 | 追问「失败率怎么降」可获优化建议",
 }
 
 # 不追加提示的意图（报错、会话管理等）
@@ -655,6 +1205,72 @@ def _to_pick_markdown(plain: str) -> str:
     return "\n".join(out)
 
 
+def _route_to_brain(
+    raw: str,
+    *,
+    chat_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """Brain 优先路由：携带完整会话上下文（history + current_stock + last_intent）。
+
+    Brain 失败 → chat_engine（传上下文）→ info_query（最终回退）。
+    """
+    try:
+        from agents.brain import get_brain
+        from chat_session import get_history, get_current_stock, get_last_intent
+
+        brain = get_brain()
+        hist = get_history(chat_id) if chat_id else None
+        cur_stock = get_current_stock(chat_id) if chat_id else None
+        last_intent = get_last_intent(chat_id) if chat_id else None
+        chat_result = brain.ask(raw, history=hist, current_stock=cur_stock, last_intent=last_intent)
+
+        reply_text = chat_result.get("reply_markdown") or chat_result.get("reply_text", "")
+
+        # 若 Brain 返回了具体股票结果，更新会话上下文
+        if chat_id and chat_result.get("ts_code"):
+            from chat_session import set_current_stock, set_last_intent
+
+            set_current_stock(chat_id, chat_result["ts_code"],
+                            chat_result.get("name", chat_result["ts_code"]))
+            set_last_intent(chat_id, chat_result.get("intent", "brain_chat"))
+
+        return _reply_payload(
+            chat_result.get("intent", "brain_chat"),
+            reply_text,
+            ts_code=chat_result.get("ts_code"),
+            card=chat_result.get("reply_template_card"),
+            elapsed_s=chat_result.get("elapsed_s"),
+        )
+    except Exception as exc:
+        logger.warning("Brain 失败，回退 chat_engine: %s", exc)
+        try:
+            from agents.chat_engine import llm_driven_chat
+            from chat_session import get_history, get_current_stock
+
+            hist = get_history(chat_id) if chat_id else None
+            cur_stock = get_current_stock(chat_id) if chat_id else None
+            chat_result = llm_driven_chat(raw, history=hist, current_stock=cur_stock)
+            return _reply_payload(
+                chat_result.get("intent", "llm_chat"),
+                chat_result.get("reply_markdown", chat_result.get("reply_text", "")),
+                ts_code=chat_result.get("ts_code"),
+                card=chat_result.get("reply_template_card"),
+                elapsed_s=chat_result.get("elapsed_s"),
+                data_sources=chat_result.get("data_sources"),
+            )
+        except Exception as exc2:
+            logger.warning("chat_engine 也失败，回退 info_query: %s", exc2)
+            result = answer_info_question(raw)
+            return _reply_payload(
+                "info_query",
+                result["text"],
+                keywords=result["keywords"],
+                hit_count=result["count"],
+                hits=result["hits"],
+            )
+
+
 def _save_chat_history(
     *,
     channel: str,
@@ -713,6 +1329,10 @@ def handle_inbound_text(
         if mentioned and chat_id:
             is_new_session = touch_session(chat_id)
         result = _handle_inbound_text_impl(message, mentioned=mentioned, chat_id=chat_id, user_id=user_id)
+        # ── 统一保存对话历史到会话窗口（供 Brain 多轮推理）──
+        if chat_id and result and result.get("reply_text"):
+            add_message(chat_id, "user", message)
+            add_message(chat_id, "assistant", result["reply_text"])
         # 新会话追加有效时长提示（智能机器人渠道除外，因平台要求必须 @）
         if is_new_session and result and result.get("reply_text") and channel != "wecom_bot":
             from chat_session import get_session_store
@@ -773,8 +1393,13 @@ def _handle_inbound_text_impl(
             return _reply_payload("session_end", "已结束当前会话窗口。再次发送消息时请 @我。")
         return _reply_payload("help", HELP_TEXT)
 
+    # ── Claude 方案审批 ──
+    approval_result = _try_handle_approval(raw, low, chat_id=chat_id or "")
+    if approval_result is not None:
+        return approval_result
+
     # ── Claude Code 远程任务 ──
-    if low.startswith("claude ") or low.startswith("@claude ") or low.startswith("claude,"):
+    if low.startswith("claude ") or low.startswith("@claude ") or low.startswith("claude,") or low == "claude":
         task_text = re.sub(r"^(?:@?claude[,\s]+)", "", raw, flags=re.IGNORECASE).strip()
         if not task_text:
             return _reply_payload(
@@ -794,8 +1419,15 @@ def _handle_inbound_text_impl(
             f"📋 任务已入队\n\n"
             f"ID: `{tid_short}…`\n"
             f"内容: {text_preview}\n\n"
-            f"Claude 将在 {_next_poll_eta()} 内开始处理，完成后企微推送结果。",
+            f"⏳ Claude 将在 {_next_poll_eta()} 内生成方案\n"
+            f"📝 方案生成后会推送给你审批\n"
+            f"✅ 回复「**可以**」即可自动执行",
         )
+
+    # ── 混合路由：活跃会话时模糊消息 → Brain 优先 ──
+    # 明确指令（_SESSION_RULE_FIRST 匹配）保持规则路由，其余交给 Brain 做自然语言理解
+    if chat_id and session_active(chat_id) and not _SESSION_RULE_FIRST.match(raw):
+        return _route_to_brain(raw, chat_id=chat_id, user_id=user_id)
 
     # ── Topic 摘要 ──
     if low in ("最新", "latest", "摘要"):
@@ -921,6 +1553,10 @@ def _handle_inbound_text_impl(
     if low in ("选股清单", "最新选股", "今日推荐", "top picks", "top picks!", "推荐"):
         return get_latest_picks()
 
+    # ── 回测结果 ──
+    if low in ("回测结果", "回测", "选股表现", "backtest", "表现"):
+        return get_latest_backtest()
+
     # ── 概念筛选 ──
     if re.match(r"^(筛选|题材|概念)\s*[：:\s]*(.+)", raw, re.IGNORECASE):
         pick = try_handle_pick(raw)
@@ -930,19 +1566,23 @@ def _handle_inbound_text_impl(
             return result
 
     # ── Topic 查询 ──
+    # 增加最小长度限制：key 至少 2 个中文字符或 3 个 ASCII 字符，避免贪婪匹配单字
     m = re.match(r"查\s*(\S+)", raw)
-    key = m.group(1) if m else raw
-    topics = list_topics(echo=False)
-    for t in topics:
-        if key == t["topic_key"] or key == t["display_name"]:
-            payload = get_history_payload("latest", t["topic_key"])
-            text = f"【{t['display_name']}】\n{payload['wechat_text']}"
-            return _reply_payload(
-                "history_topic",
-                text,
-                topic_key=t["topic_key"],
-                count=payload["count"],
-            )
+    key = m.group(1) if m else ""
+    if key and not (len(key.encode("utf-8")) >= 6 or len(key) >= 3):
+        key = ""  # key 太短，不匹配（如"查一下""查""查a"）
+    if key:
+        topics = list_topics(echo=False)
+        for t in topics:
+            if key == t["topic_key"] or key == t["display_name"]:
+                payload = get_history_payload("latest", t["topic_key"])
+                text = f"【{t['display_name']}】\n{payload['wechat_text']}"
+                return _reply_payload(
+                    "history_topic",
+                    text,
+                    topic_key=t["topic_key"],
+                    count=payload["count"],
+                )
 
     # ── 股票对比 ──
     compare_pair = None
@@ -979,66 +1619,14 @@ def _handle_inbound_text_impl(
             return result
 
     # 简单股票名/代码 → 直接深度分析（误判由 try_handle_pick 返回 None 兜底）
-    if _looks_like_stock_query(raw):
+    # 注意：有活跃会话时跳过，交给 Brain 做自然语言理解（避免"它""这个"等代词误判）
+    if not (chat_id and session_active(chat_id)) and _looks_like_stock_query(raw):
         pick = try_handle_pick(raw)
         if pick and pick.get("reply_text"):
             result = _pick_reply(pick, str(pick["reply_text"]))
             _capture_pick_context(chat_id, result)
             return result
 
-    # ── Brain 驱动的统一对话 ──
-    # 带多轮对话记忆：读取历史 → Brain → 保存 Q&A
-    try:
-        from agents.brain import get_brain
-        from chat_session import add_message, get_history, get_current_stock
-
-        brain = get_brain()
-        hist = get_history(chat_id) if chat_id else None
-        cur_stock = get_current_stock(chat_id) if chat_id else None
-        chat_result = brain.ask(raw, history=hist, current_stock=cur_stock)
-
-        # 保存本轮对话到会话历史
-        reply_text = chat_result.get("reply_markdown") or chat_result.get("reply_text", "")
-        if chat_id and reply_text:
-            add_message(chat_id, "user", raw)
-            add_message(chat_id, "assistant", reply_text)
-
-        # 若 Brain 返回了具体股票结果，更新会话上下文
-        if chat_id and chat_result.get("ts_code"):
-            from chat_session import set_current_stock
-            set_current_stock(chat_id, chat_result["ts_code"],
-                            chat_result.get("name", chat_result["ts_code"]))
-
-        return _reply_payload(
-            chat_result.get("intent", "brain_chat"),
-            reply_text,
-            ts_code=chat_result.get("ts_code"),
-            card=chat_result.get("reply_template_card"),
-            elapsed_s=chat_result.get("elapsed_s"),
-        )
-    except Exception as exc:
-        # Brain 失败 → 回退 chat_engine
-        logger.warning("Brain 失败，回退 chat_engine: %s", exc)
-        try:
-            from agents.chat_engine import llm_driven_chat
-
-            chat_result = llm_driven_chat(raw)
-            return _reply_payload(
-                chat_result.get("intent", "llm_chat"),
-                chat_result.get("reply_markdown", chat_result.get("reply_text", "")),
-                ts_code=chat_result.get("ts_code"),
-                card=chat_result.get("reply_template_card"),
-                elapsed_s=chat_result.get("elapsed_s"),
-                data_sources=chat_result.get("data_sources"),
-            )
-        except Exception as exc2:
-            # 最终回退到旧版问答
-            logger.warning("chat_engine 也失败，回退 info_query: %s", exc2)
-            result = answer_info_question(raw)
-            return _reply_payload(
-                "info_query",
-                result["text"],
-                keywords=result["keywords"],
-                hit_count=result["count"],
-                hits=result["hits"],
-            )
+    # ── Brain 驱动的统一对话（最终回退）──
+    # 所有未匹配规则的消息最终交给 Brain，携带完整会话上下文
+    return _route_to_brain(raw, chat_id=chat_id, user_id=user_id)

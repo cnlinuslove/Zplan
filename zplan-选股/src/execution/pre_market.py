@@ -359,13 +359,28 @@ def _format_pre_market_markdown(
     # ── 今日操作清单（整合选股排行）──
     lines.append("### 📋 今日操作清单")
     lines.append("")
-    lines.append("| # | 标的 | 昨收 | 评分 | 买入参考 | 建议 | 推荐理由 |")
-    lines.append("|---|------|------|------|----------|------|----------|")
+    lines.append("| # | 标的 | 行业 | 市值 | 昨收 | 评分 | 买入参考 | 建议 | 推荐理由 |")
+    lines.append("|---|------|------|------|------|------|----------|------|----------|")
 
     for p in plans:
         name = p.name or p.ts_code
         code = p.ts_code
         close_s = f"¥{p.close_yesterday:.2f}" if p.close_yesterday else "--"
+
+        # 行业
+        industry_s = p.industry or "--"
+
+        # 市值
+        mv = p.total_mv
+        if mv is not None and mv > 0:
+            if mv >= 1e8:
+                mv_s = f"{mv/1e8:.0f}亿"
+            elif mv >= 1e4:
+                mv_s = f"{mv/1e4:.0f}万"
+            else:
+                mv_s = f"¥{mv:.0f}"
+        else:
+            mv_s = "--"
 
         # 买入参考：优先调整后价格；与原始建议价差异 >0.1% 时标 *
         predicted = p.predicted_buy
@@ -423,7 +438,7 @@ def _format_pre_market_markdown(
         reason_str = " · ".join(reason_parts) if reason_parts else "--"
 
         lines.append(
-            f"| {p.rank} | {rec_icon} **{name}**({code}) | {close_s} | {score_s} | {buy_s} | {rec} | {reason_str} |"
+            f"| {p.rank} | {rec_icon} **{name}**({code}) | {industry_s} | {mv_s} | {close_s} | {score_s} | {buy_s} | {rec} | {reason_str} |"
         )
 
     # 买入参考列注释

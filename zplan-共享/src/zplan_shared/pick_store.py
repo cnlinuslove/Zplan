@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import desc, select
 
 from zplan_shared.models import PickEntry, PickRun, SessionLocal, init_db
+from zplan_shared.market import next_trading_day
 from zplan_shared.pick_predictions import price_levels_from_pick, price_levels_from_report
 
 
@@ -167,9 +168,11 @@ def save_scan_run(
         if k in result
     }
     with SessionLocal() as session:
+        as_of_d = _parse_as_of(result.get("as_of"))
         run = PickRun(
             run_kind=result.get("run_kind") or "scan",
-            trade_date_as_of=_parse_as_of(result.get("as_of")),
+            trade_date_as_of=as_of_d,
+            trade_date=next_trading_day(as_of_d) if as_of_d else None,
             rule_version=str(result.get("rule_version") or ""),
             llm_enabled=bool(result.get("llm_scan_brief")),
             llm_model=(result.get("llm_usage") or {}).get("model"),
@@ -210,9 +213,11 @@ def save_report_run(
     row = _entry_from_report(report)
     meta = report.get("meta") or {}
     with SessionLocal() as session:
+        as_of_d = _parse_as_of(report.get("as_of"))
         run = PickRun(
             run_kind="report",
-            trade_date_as_of=_parse_as_of(report.get("as_of")),
+            trade_date_as_of=as_of_d,
+            trade_date=next_trading_day(as_of_d) if as_of_d else None,
             rule_version=str(report.get("rule_version") or ""),
             llm_enabled=llm_enabled,
             llm_model=llm_model,

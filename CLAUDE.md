@@ -79,6 +79,9 @@ AkShare → zplan-股价 ETL → zplan.db
 | `com.zplan.pipeline-daily` | 每天 17:35 | 日线+衍生+估值+资讯+企微播报 |
 | `com.zplan.pipeline-weekly` | 周五 18:00 | 全量含季报+规则打分 |
 | `com.zplan.news-intraday` | 8:00/12:00/16:00/21:00 | 东财快讯+新闻关联 |
+| `com.zplan.pre-market-forecast` | 08:15 周一至周五 | 盘前大盘预测播报（重估式） |
+| `com.zplan.execution.pre-market` | 08:28 周一至周五 | 盘前个股买入价调整 |
+| `com.zplan.morning-top10` | 09:00 周一至周五 | 早间 TOP10 推荐播报 |
 | `ai.zplan.wecom-direct` | 常驻 | 企微 Bot 直连 |
 
 ```bash
@@ -100,6 +103,10 @@ tail ~/my_stock_ai/zplan-资讯/logs/full_pipeline_*.log
 ## 常用命令
 
 ```bash
+# 盘前大盘预测播报（隔夜外盘+新闻重估）
+cd zplan-资讯 && .venv/bin/python scripts/pre_market_forecast.py
+cd zplan-资讯 && .venv/bin/python scripts/pre_market_forecast.py --dry-run
+
 # 企微选股测试
 cd zplan-资讯 && .venv/bin/python openclaw_bridge.py wechat-reply --text "选股 平安银行"
 

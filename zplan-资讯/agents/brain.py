@@ -432,18 +432,20 @@ class ZplanBrain:
         self._tools = TOOLS
 
     def ask(self, message: str, history: list[dict[str, str]] | None = None,
-            current_stock: dict[str, str] | None = None) -> dict[str, Any]:
+            current_stock: dict[str, str] | None = None,
+            last_intent: str | None = None) -> dict[str, Any]:
         """对话入口。
 
         Args:
             message: 当前用户消息
             history: 可选，之前的对话历史 [{"role":"user","content":...}, ...]
             current_stock: 可选，会话中当前讨论的股票 {ts_code, name}
+            last_intent: 可选，上一次对话意图（用于理解对话脉络）
         """
         t0 = time.time()
 
         if not deepseek_available():
-            return self._fallback_chat(message)
+            return self._fallback_chat(message, history=history, current_stock=current_stock)
 
         # 1. 预加载上下文（仅在无会话上下文或用户明确提到新股时执行）
         ctx: dict[str, Any] = {"stocks": [], "live_news": []}
@@ -475,7 +477,7 @@ class ZplanBrain:
 
         stocks = ctx.get("stocks", [])
 
-        # 2. 会话上下文注入（当前讨论的股票）
+        # 2. 会话上下文注入（当前讨论的股票 + 最近意图）
         session_hint = ""
         if current_stock:
             cs_code = current_stock["ts_code"]
@@ -491,6 +493,19 @@ class ZplanBrain:
                 "4. 只有用户明确写出其他股票名（如「对比XX」「那看看XX呢」）时才可以切换。\n"
                 "5. 严禁根据发音相似或名称部分匹配去猜测其他股票。"
             )
+            # 附加最近意图，帮助 Brain 理解对话脉络
+            if last_intent:
+                intent_labels = {
+                    "pick": "分析了具体股票", "pick_symbol": "查看了某只股票",
+                    "picks_list": "查看了今日选股清单", "forecast": "查看了大盘预测",
+                    "watchlist": "查看了自选列表", "positions": "查看了持仓情况",
+                    "compare": "对比了两只股票", "brain_chat": "进行了一轮对话",
+                    "claude_task": "提交了远程任务", "claude_approval": "审批了方案",
+                    "buy": "记录了买入", "sell": "记录了卖出",
+                    "history_latest": "查看了最新资讯",
+                }
+                label = intent_labels.get(last_intent, last_intent)
+                session_hint += f"\n\n用户上一轮进行了「{label}」操作。请结合上下文理解本轮追问。"
 
         try:
             messages = [{"role": "system", "content": _BRAIN_SYSTEM + stock_hint + session_hint}]
@@ -559,13 +574,13 @@ class ZplanBrain:
 
         except Exception as exc:
             logger.warning("Brain function calling 失败，回退 chat_engine: %s", exc)
-            return self._fallback_chat(message)
-
-    def _fallback_chat(self, message: str) -> dict[str, Any]:
+            return self._fallback_chat(message, history=history, current_stock=current_stock)
+    def _fallback_chat(self, message: str, history: list[dict[str, str]] | None = None,
+                       current_stock: dict[str, str] | None = None) -> dict[str, Any]:
         """回退到 chat_engine 的直接 LLM 调用（预加载数据 + 一条 prompt）。"""
         from agents.chat_engine import llm_driven_chat
 
-        return llm_driven_chat(message)
+        return llm_driven_chat(message, history=history, current_stock=current_stock)
 
     def _format_response(
         self, reply: str, stocks: list[dict], elapsed: float,

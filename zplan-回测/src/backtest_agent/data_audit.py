@@ -77,12 +77,28 @@ def score_deviation_report(
 
     with SessionLocal() as session:
         if run_id is None:
-            run = session.execute(
-                select(PickRun)
-                .where(PickRun.run_kind.in_(["llm_top300", "scan"]), PickRun.llm_enabled.is_(True))
-                .order_by(PickRun.id.desc())
-                .limit(1)
-            ).scalar_one_or_none()
+            today = latest_trade_date()
+            if today:
+                run = session.execute(
+                    select(PickRun)
+                    .where(
+                        PickRun.run_kind.in_(["llm_top300", "scan"]),
+                        PickRun.llm_enabled.is_(True),
+                        PickRun.trade_date.isnot(None),
+                        PickRun.trade_date <= today,
+                    )
+                    .order_by(PickRun.trade_date.desc(), PickRun.id.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+            else:
+                run = None
+            if not run:
+                run = session.execute(
+                    select(PickRun)
+                    .where(PickRun.run_kind.in_(["llm_top300", "scan"]), PickRun.llm_enabled.is_(True))
+                    .order_by(PickRun.trade_date.desc(), PickRun.id.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
             run_id = run.id if run else None
 
     validation = validate_entries(run_id=run_id, horizons=[horizon_days, 10, 20], limit=top_n * 3)

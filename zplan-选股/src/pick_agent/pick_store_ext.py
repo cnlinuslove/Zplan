@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any
 
 from zplan_shared.models import PickEntry, PickRun, SessionLocal, init_db
+from zplan_shared.market import next_trading_day
 from zplan_shared.pick_store import _entry_from_pick
 
 
@@ -35,6 +36,7 @@ def save_watchlist_daily_run(
         run = PickRun(
             run_kind="watchlist_daily",
             trade_date_as_of=as_of_d,
+            trade_date=next_trading_day(as_of_d) if as_of_d else None,
             rule_version=rule_version,
             llm_enabled=llm_enabled,
             llm_model=llm_model,
